@@ -222,7 +222,7 @@ class ConvNet:
     def __init__(self,
                  lr: float = 0.001,
                  momentum: float = 0.9,
-                 progress_interval: int = 2000,
+                 progress_interval: int = 20000,
                  checkpoint_dir: str = None):
         """ CNN based image classifier
         * Allocate a GPU automatically; specify by CUDA_GPU_DEVICES
@@ -240,6 +240,7 @@ class ConvNet:
         # build network
         self.__net = Net()
         if torch.cuda.device_count() >= 1:
+            self.__logger.debug('running on GPU')
             self.if_use_gpu = True
             self.__net = self.__net.cuda()
         else:
@@ -321,6 +322,7 @@ class ConvNet:
             # optimize
             self.__optimizer.step()
             # accuracy
+            print(pred, labels)
             correct_count += ((pred == labels).cpu().float().sum()).item()
             data_size += len(labels)
 
