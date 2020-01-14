@@ -210,7 +210,7 @@ class Net(nn.Module):
         x = nn.functional.relu(self.fc1(x))
         x = nn.functional.relu(self.fc2(x))
         x = self.fc3(x)
-        _, y = torch.max(x, 1)
+        _, y = torch.max(x, dim=-1)
         p = torch.nn.functional.softmax(x, dim=1)
         return x, y, p
 
@@ -309,14 +309,12 @@ class ConvNet:
         for i, data in enumerate(data_loader, 1):
             # get the inputs (data is a list of [inputs, labels])
             inputs, labels = data
-            print(inputs.shape, labels.shape)
             if self.if_use_gpu:
                 inputs, labels = inputs.cuda(), labels.cuda()
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
             logit, pred, prob = self.__net(inputs)
-            print(logit.shape, pred.shape, prob.shape)
 
             tmp_loss = self.__loss(logit, labels)
             # backward: calculate gradient
@@ -324,7 +322,6 @@ class ConvNet:
             # optimize
             self.__optimizer.step()
             # accuracy
-            print(pred, labels)
             correct_count += ((pred == labels).cpu().float().sum()).item()
             data_size += len(labels)
 
