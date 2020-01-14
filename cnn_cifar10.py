@@ -1,6 +1,6 @@
 """ pytorch sample of image classification with CIFAIR10
 
-# logging instance loss
+* logging instance loss
 * checkpoint manager
 * write/load checkpoint
 * tensorboard
