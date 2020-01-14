@@ -315,7 +315,9 @@ class ConvNet:
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
-            logit, pred, _ = self.__net(inputs)
+            logit, pred, prob = self.__net(inputs)
+            print(logit.shape, pred.shape, prob.shape)
+
             tmp_loss = self.__loss(logit, labels)
             # backward: calculate gradient
             tmp_loss.backward()
