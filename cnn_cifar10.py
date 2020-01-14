@@ -210,8 +210,8 @@ class Net(nn.Module):
         x = nn.functional.relu(self.fc1(x))
         x = nn.functional.relu(self.fc2(x))
         x = self.fc3(x)
-        _, y = torch.max(x, 0)
-        p = torch.nn.functional.softmax(x, dim=0)
+        _, y = torch.max(x, 1)
+        p = torch.nn.functional.softmax(x, dim=1)
         return x, y, p
 
 
