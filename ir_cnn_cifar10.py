@@ -1,8 +1,8 @@
-""" pytorch sample of image classification with CIFAIR10
+""" pytorch sample of image recognition on CIFAIR10
 
 * logging instance loss
 * checkpoint manager
-* write/load checkpoint
+* save checkpoints
 * tensorboard
 """
 
@@ -232,7 +232,7 @@ class ConvNet:
         # setup parameter
         self.__param = ParameterManager(
             checkpoint_dir=checkpoint_dir,
-            default_parameter='./parameters/cnn_cifar10.toml',
+            default_parameter='./parameters/ir_cnn_cifar10.toml',
             lr=lr,
             momentum=momentum)
         self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
@@ -271,10 +271,6 @@ class ConvNet:
                 model_size += np.prod(v.weight.shape)
                 self.__logger.debug(' - [weight size] %s: %s' % (k, str(list(v.weight.shape))))
         self.__logger.debug('model has %i parameters' % model_size)
-
-    def predict(self):
-        # TODO: inference API
-        self.__net.eval()
 
     def train(self,
               data_train,
@@ -370,7 +366,7 @@ if __name__ == '__main__':
     testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
 
     # main
-    nn_model = ConvNet(checkpoint_dir='./ckpt/cnn_cifar10')
+    nn_model = ConvNet(checkpoint_dir='./ckpt/ir_cnn_cifar10')
     nn_model.train(data_train=trainset, data_valid=testset, epoch=100)
 
 
