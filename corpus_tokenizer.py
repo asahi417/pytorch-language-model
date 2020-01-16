@@ -1,5 +1,6 @@
-""" train tokenizer on dataset from torchtext
+""" train tokenizer on dataset from torchtext with huggingface tokenizers
 https://github.com/pytorch/text#datasets
+https://github.com/huggingface/tokenizers/tree/master/bindings/python
 """
 import tokenizers
 import torchtext
@@ -111,11 +112,27 @@ if __name__ == '__main__':
             if n > 10:
                 break
 
+    # tokenize full corpus
+    logger.info('tokenize corpus')
+    for _file in file_paths:
+        logger.info(' - converting file %s' % _file)
+        token_ids_list = []
+        with open(_file, 'r') as f:
+            for n, text in enumerate(f.read().split('\n')):
+                encoded_ids = tokenizer.encode(text).ids
+                token_ids_list.append(' '.join([str(i) for i in encoded_ids]))
+        token_ids = '\n'.join(token_ids_list)
+        _file = _file.replace('.txt', '_id.txt')
+        with open(_file, 'w') as f:
+            f.write(token_ids)
+        logger.info(' - saved at %s' % _file)
+
     # save
-    save_dir = os.path.join("./vocab", arguments.tokenizer)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir, exist_ok=True)
-    tokenizer.save(save_dir, arguments.data)
-    logger.info('saved at %s' % save_dir)
+    if not if_trained_flg:
+        save_dir = os.path.join("./vocab", arguments.tokenizer)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
+        tokenizer.save(save_dir, arguments.data)
+        logger.info('saved at %s' % save_dir)
 
 

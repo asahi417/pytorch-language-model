@@ -1,12 +1,10 @@
-""" pytorch sample of image recognition on hymenoptera_data
+""" pytorch sample of language model
 
-* ResNet architecture & finetune from pre-trained checkpoint
+* locked (variational) dropout
 * logging instance loss/accuracy with progress interval
 * checkpoint manager
 * save the best model in terms of valid accuracy
 * tensorboard
-* learning rate scheduler
-
 """
 
 # for model
@@ -14,8 +12,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
+from torch.autograd import Variable
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
@@ -182,27 +179,191 @@ class ParameterManager:
                 return target_checkpoints_path, parameter
 
 
-class ResNet:
-    """ ResNet image classifier """
+class LockedDropout(nn.Module):
+    """ locked dropout/variational dropout described in https://arxiv.org/pdf/1708.02182.pdf
+    * drop all the feature in target batch, instead of fully random dropout
+    """
+
+    def __init__(self, dropout: float = 0.5):
+        super().__init__()
+        self.__dropout = dropout
+
+    def forward(self, x):
+        if not self.training or not self.__dropout:
+            return x
+        m = x.data.new(1, x.size(1), x.size(2))
+        m = m.bernoulli_(1 - self.__dropout)  # rescale un-dropped values to keep distribution consistent
+        mask = Variable(m, requires_grad=False) / (1 - self.__dropout)
+        mask = mask.expand_as(x)
+        return mask * x
+
+
+class EmbeddingLookup(nn.Module):
+    """ Embedding lookup layer with word dropout described in https://arxiv.org/pdf/1708.02182.pdf
+    * drop all the embedding in target word, instead of fully random dropout
+    """
+
+    def __init__(self, dropout: float = 0.1):
+        super().__init__()
+        self.__dropout = dropout
+
+    def forward(self, embedding_mat, words):
+        if not self.training or not self.__dropout:
+            masked_embed_weight = embedding_mat.weight
+        else:
+            mask = embedding_mat.weight.data.new().resize_((embedding_mat.weight.size(0), 1))
+            # rescale un-dropped values to keep distribution consistent
+            mask = mask.bernoulli_(1 - self.__dropout).expand_as(embedding_mat.weight) / (1 - self.__dropout)
+            masked_embed_weight = mask * embedding_mat.weight
+
+        # lookup embedding with mask
+        x = nn.functional.embedding(words,
+                                    weight=masked_embed_weight,
+                                    padding_idx=-1 if embedding_mat.padding_idx is None else embedding_mat.padding_idx,
+                                    max_norm=embedding_mat.max_norm,
+                                    norm_type=embedding_mat.norm_type,
+                                    scale_grad_by_freq=embedding_mat.scale_grad_by_freq,
+                                    sparse=embedding_mat.sparse)
+        return x
+
+
+class Net(nn.Module):
+    """ Network Architecture: LSTM based Language Model """
+
+    def __init__(self,
+                 dropout_word: float,
+                 dropout_embedding: float,
+                 dropout_intermediate: float,
+                 dropout_output: float,
+                 vocab_size: int,
+                 embedding_dim: int,
+                 n_layers: int,
+                 n_hidden_units: int,
+                 sequence_length: int,
+                 tie_weights: bool,
+                 init_range: float):
+        """ Network Architecture """
+        super(Net, self).__init__()
+        self.__embedding_lookup = EmbeddingLookup(dropout_word)
+        self.__dropout_embedding = LockedDropout(dropout_embedding)
+        self.__dropout_intermediate = LockedDropout(dropout_intermediate)
+        self.__dropout_output = LockedDropout(dropout_output)
+
+        cells = []
+        for i in range(n_layers):
+            if i == 0:
+                cell = nn.LSTM(embedding_dim, n_hidden_units)
+            elif i == n_layers - 1:
+                cell = nn.LSTM(n_hidden_units, embedding_dim)
+            else:
+                cell = nn.LSTM(n_hidden_units, n_hidden_units)
+            cells.append(cell)
+
+        self.__cells = nn.ModuleList(cells)
+
+        self.__embedding_layer = nn.Embedding(vocab_size, embedding_dim)
+        self.__decoding_layer = nn.Linear(embedding_dim, vocab_size)
+
+        if tie_weights:
+            # nn.Embedding(a, b).weight.shape -> (a, b), while nn.Linear(a, b) -> (b, a)
+            # so encoder's weight can be directly copied to decoder.
+            self.__decoding_layer.weight = self.__embedding_layer.weight
+
+        self.__sequence_length = sequence_length
+        self.__n_layers = n_layers
+        self.__n_hidden_units = n_hidden_units
+        self.__embedding_dim = embedding_dim
+        self.__tie_weights = tie_weights
+        self.__init_weights(init_range=init_range)
+
+    def __init_weights(self, init_range: float):
+        """ uniform weight initialization for encoding/decoding layer """
+        self.__embedding_layer.weight.data.uniform_(-init_range, init_range)
+        if not self.__tie_weights:
+            self.__decoding_layer.weight.data.uniform_(-init_range, init_range)
+
+    def init_state(self, batch_size: int):
+        """ get initial state of recurrent cell: list of tensor (layer, batch, dim) """
+
+        def __init_state(i):
+            if i == self.__n_layers - 1:
+                units = self.__embedding_dim
+            else:
+                units = self.__n_hidden_units
+            state = torch.zeros((1, batch_size, units), dtype=torch.float32)
+            if torch.cuda.device_count() >= 1:
+                state.cuda()
+            return state
+
+        return [__init_state(i) for i in range(self.__n_layers)]
+
+    def forward(self, input_token, hidden=None):
+        """ model output
+
+         Parameter
+        -------------
+        input_token: input token id batche tensor (batch, )
+        hidden: list of tensor (layer, batch, dim)
+
+         Return
+        -------------
+        x: logit (batch, dim)
+        y: prediction (batch, )
+        p: probability (batch, dim)
+        """
+
+        if hidden is None:
+            hidden = self.init_state(input_token.shape[0])
+
+        emb = self.__embedding_lookup(self.__embedding_layer, input_token)  # lookup embedding matrix
+        emb = self.__dropout_embedding(emb)  # dropout embeddings
+        new_hidden = []  # hidden states
+
+        for i, cell in enumerate(self.__cells):
+            emb, new_h = cell(emb, hidden[i])
+            new_hidden.append(new_h)
+            if i == self.__n_layers - 1:
+                emb = self.__dropout_output(emb)
+            else:
+                emb = self.__dropout_intermediate(emb)
+
+        output = emb.view(emb.size(0) * emb.size(1), emb.size(2))
+        return output, new_hidden
+
+
+class LanguageModel:
+    """ LSTM bases language model """
 
     def __init__(self,
                  progress_interval: int = 20000,
                  checkpoint_dir: str = None,
                  **kwargs):
-        """ ResNet image classifier
+        """ LSTM bases language model
         * Allocate a GPU automatically; specify by CUDA_VISIBLE_DEVICES
+        * Load checkpoints if it exists
         """
         self.__logger = create_log()
-        self.__logger.debug('initialize network: *** ResNet for Image Classification ***')
+        self.__logger.debug('initialize network: \n*** LSTM based language model ***\n')
         # setup parameter
         self.__param = ParameterManager(
             checkpoint_dir=checkpoint_dir,
-            default_parameter='./parameters/ir_resnet_hymenoptera.toml',
+            default_parameter='./parameters/lm_lstm_ptb.toml',
             **kwargs)
         self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
         # build network
-        self.__net = torchvision.models.resnet18(pretrained=True)
-        self.__net.fc = nn.Linear(self.__net.fc.in_features, self.__param('label_size'))
+        self.__net = Net(
+            dropout_word=self.__param("dropout_word"),
+            dropout_embedding=self.__param("dropout_embedding"),
+            dropout_intermediate=self.__param("dropout_intermediate"),
+            dropout_output=self.__param("dropout_output"),
+            vocab_size=self.__param("vocab_size"),
+            embedding_dim=self.__param("embedding_dim"),
+            n_layers=self.__param("n_layers"),
+            n_hidden_units=self.__param("n_hidden_units"),
+            sequence_length=self.__param("sequence_length"),
+            tie_weights=self.__param("tie_weights"),
+            init_range=self.__param("init_range")
+        )
         # GPU allocation
         if torch.cuda.device_count() >= 1:
             self.__logger.debug('running on GPU')
@@ -211,13 +372,12 @@ class ResNet:
         else:
             self.if_use_gpu = False
         # optimizer
-        self.__optimizer = optim.SGD(
-            self.__net.parameters(), lr=self.__param('lr'), momentum=self.__param('momentum'))
-        # Decay LR by a factor of `gamma` every `step_size` epochs
-        self.__exp_lr_scheduler = optim.lr_scheduler.StepLR(
-            self.__optimizer, step_size=self.__param('step_size'), gamma=self.__param('gamma'))
+        self.__optimizer = optim.Adam(
+            self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
+
         # loss definition (CrossEntropyLoss includes softmax inside)
         self.__loss = nn.CrossEntropyLoss()
+
         # load pre-trained ckpt
         if os.path.exists(self.__checkpoint_model):
             self.__net.load_state_dict(torch.load(self.__checkpoint_model))
@@ -233,12 +393,17 @@ class ResNet:
 
     def __sanity_check(self):
         """ sanity check as logging model size """
+        self.__logger.debug('trainable variables')
         model_size = 0
-        for k, v in self.__net.__dict__['_modules'].items():
-            if hasattr(v, 'weight'):
-                model_size += np.prod(v.weight.shape)
-                self.__logger.debug(' - [weight size] %s: %s' % (k, str(list(v.weight.shape))))
-        self.__logger.debug('model has %i parameters' % model_size)
+        for name, param in self.__net.named_parameters():
+            if param.requires_grad:
+                __shape = list(param.data.shape)
+                model_size += np.prod(__shape)
+                self.__logger.debug(' - [weight size] %s: %s' % (name, str(__shape)))
+        self.__logger.debug(' - %i variables in total' % model_size)
+        self.__logger.debug('hyperparameters')
+        for k, v in self.__param.parameter.items():
+            self.__logger.debug(' - [param] %s: %s' % (k, str(v)))
 
     def train(self,
               data_train,
@@ -304,6 +469,9 @@ class ResNet:
             tmp_loss = self.__loss(logit, labels)
             # backward: calculate gradient
             tmp_loss.backward()
+            # gradient clip
+            if self.__param('clip') is not None:
+                nn.utils.clip_grad_norm_(self.__net.parameters(), self.__param('clip'))
             # optimize
             self.__optimizer.step()
             # accuracy
@@ -352,34 +520,8 @@ class ResNet:
 
 
 if __name__ == '__main__':
-    # data transoforms
-    data_transforms = {
-        'train': transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ]),
-        'val': transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ]),
-    }
+    data_train = './data/penn-treebank/ptb_train_id.txt'
+    data_test = './data/penn-treebank/ptb_test_id.txt'
+    data_valid = './data/penn-treebank/ptb_valid_id.txt'
 
-    # data loader
-    data_dir_train = './data/hymenoptera_data/train'
-    data_dir_val = './data/hymenoptera_data/val'
-    if not os.path.exists(data_dir_train) or not os.path.exists(data_dir_train):
-        raise ValueError('please download data from `https://download.pytorch.org/tutorial/hymenoptera_data.zip`')
-
-    dataset_train = torchvision.datasets.ImageFolder(data_dir_train, data_transforms['train'])
-    dataset_val = torchvision.datasets.ImageFolder(data_dir_val, data_transforms['val'])
-
-    # main
-    nn_model = ResNet(checkpoint_dir='./ckpt/ir_resnet_hymenoptera')
-    nn_model.train(data_train=dataset_train, data_valid=dataset_val, epoch=25)
-
-
-
+    # LanguageModel(checkpoint_dir='./ckpt/lm_lstm_ptb')
