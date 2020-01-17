@@ -187,7 +187,7 @@ class BatchFeeder:
                  batch_size,
                  num_steps,
                  sequence,
-                 cuda: bool=False):
+                 cuda: bool=True):
         """ Pytorch batch feeding iterator for language model training
 
          Parameter
