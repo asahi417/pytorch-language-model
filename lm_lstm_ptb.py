@@ -549,7 +549,6 @@ class LanguageModel:
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
             (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
-            # hidden_state = hidden_state.detach()
             # backward: calculate gradient
             logit = logit.view(-1, logit.size(-1))
             outputs = outputs.view(-1)
@@ -562,8 +561,8 @@ class LanguageModel:
             self.__optimizer.step()
             # log
             tmp_loss = tmp_loss.cpu().item()
-            full_loss += len(inputs) * tmp_loss
-            full_seq_length += len(inputs)
+            full_loss += len(outputs) * tmp_loss
+            full_seq_length += len(outputs)
             perplexity = np.exp(min(30, full_loss / full_seq_length))
             self.__writer.add_scalar('train/loss', tmp_loss, i + epoch_n * len(data_loader))
             self.__writer.add_scalar('train/perplexity', perplexity, i + epoch_n * len(data_loader))
@@ -584,11 +583,13 @@ class LanguageModel:
         full_loss = 0
         for data in data_loader:
             inputs, outputs = data
-            (output, prob, pred), hidden_state = self.__net(inputs, hidden_state)
-            tmp_loss = self.__loss(output, outputs)
+            (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+            logit = logit.view(-1, logit.size(-1))
+            outputs = outputs.view(-1)
+            tmp_loss = self.__loss(logit, outputs)
             tmp_loss = tmp_loss.cpu().item()
-            full_loss += len(inputs) * tmp_loss
-            full_seq_length += len(inputs)
+            full_loss += len(outputs) * tmp_loss
+            full_seq_length += len(outputs)
         mean_loss = full_loss / full_seq_length
         perplexity = np.exp(min(30, full_loss / full_seq_length))
         self.__writer.add_scalar('valid/perplexity', perplexity, epoch_n)
@@ -603,11 +604,13 @@ class LanguageModel:
         full_loss = 0
         for data in data_loader:
             inputs, outputs = data
-            (output, prob, pred), hidden_state = self.__net(inputs, hidden_state)
-            tmp_loss = self.__loss(output, outputs)
+            (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+            logit = logit.view(-1, logit.size(-1))
+            outputs = outputs.view(-1)
+            tmp_loss = self.__loss(logit, outputs)
             tmp_loss = tmp_loss.cpu().item()
-            full_loss += len(inputs) * tmp_loss
-            full_seq_length += len(inputs)
+            full_loss += len(outputs) * tmp_loss
+            full_seq_length += len(outputs)
         mean_loss = full_loss / full_seq_length
         perplexity = np.exp(min(30, full_loss / full_seq_length))
         return mean_loss, perplexity
