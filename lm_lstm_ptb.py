@@ -211,7 +211,7 @@ class BatchFeeder:
         # Evenly divide the data across the bsz batches.
         self._data = seq.view(self.batch_size, -1).t().contiguous()
         if cuda and torch.cuda.device_count() >= 1:
-            self._data.cuda()
+            self._data = self._data.cuda()
 
     def __len__(self):
         return (self.data_size // self.batch_size - 1) // self.num_steps
@@ -357,7 +357,7 @@ class Net(nn.Module):
 
         return [__init_state(i) for i in range(self.__n_layers)]
 
-    def forward(self, input_token, hidden=None, cuda: bool=True):
+    def forward(self, input_token, hidden=None):
         """ model output
 
          Parameter
@@ -375,9 +375,9 @@ class Net(nn.Module):
         """
 
         if hidden is None:
-            hidden = self.init_state(input_token.shape[1], cuda=cuda)
+            hidden = self.init_state(input_token.shape[1])
         # print([i.shape for i in hidden])
-        emb = self.__embedding_lookup(self.__embedding_layer.cuda(), input_token.cuda())  # lookup embedding matrix (seq, batch, dim)
+        emb = self.__embedding_lookup(self.__embedding_layer, input_token)  # lookup embedding matrix (seq, batch, dim)
         emb = self.__dropout_embedding(emb)  # dropout embeddings
         new_hidden = []  # hidden states
 
@@ -546,6 +546,9 @@ class LanguageModel:
         for i, data in enumerate(data_loader, 1):
             # get the inputs (data is a list of [inputs, labels])
             inputs, outputs = data
+            # if self.if_use_gpu:
+            #     inputs = inputs.cuda()
+            #     outputs = outputs.cuda()
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
@@ -585,6 +588,9 @@ class LanguageModel:
         full_loss = 0
         for data in data_loader:
             inputs, outputs = data
+            # if self.if_use_gpu:
+            #     inputs = inputs.cuda()
+            #     outputs = outputs.cuda()
             (output, prob, pred), hidden_state = self.__net(inputs, hidden_state)
             tmp_loss = self.__loss(output, outputs)
             tmp_loss = tmp_loss.cpu().item()
@@ -604,6 +610,9 @@ class LanguageModel:
         full_loss = 0
         for data in data_loader:
             inputs, outputs = data
+            # if self.if_use_gpu:
+            #     inputs = inputs.cuda()
+            #     outputs = outputs.cuda()
             (output, prob, pred), hidden_state = self.__net(inputs, hidden_state)
             tmp_loss = self.__loss(output, outputs)
             tmp_loss = tmp_loss.cpu().item()
