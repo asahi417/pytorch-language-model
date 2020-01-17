@@ -377,7 +377,7 @@ class Net(nn.Module):
         if hidden is None:
             hidden = self.init_state(input_token.shape[1], cuda=cuda)
         # print([i.shape for i in hidden])
-        emb = self.__embedding_lookup(self.__embedding_layer.cuda(), input_token)  # lookup embedding matrix (seq, batch, dim)
+        emb = self.__embedding_lookup(self.__embedding_layer.cuda(), input_token.cuda())  # lookup embedding matrix (seq, batch, dim)
         emb = self.__dropout_embedding(emb)  # dropout embeddings
         new_hidden = []  # hidden states
 
