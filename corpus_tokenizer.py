@@ -114,9 +114,9 @@ if __name__ == '__main__':
         if not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
         tokenizer.save(save_dir, arguments.data)
-        vocab_size = len(json.load(open('./vocab/%s/%s-vocab.json' % (arguments.tokenizer, arguments.data))))
+        # vocab_size = len(json.load(open('./vocab/%s/%s-vocab.json' % (arguments.tokenizer, arguments.data))))
         _logger.info('saved tokenizer at %s' % save_dir)
-        _logger.info('vocab: %i' % vocab_size)
+        # _logger.info('vocab: %i' % vocab_size)
 
     else:
         _logger.info('load trained tokenizer')
