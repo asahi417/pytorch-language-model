@@ -19,6 +19,7 @@ import numpy as np
 # for parameter manager
 import json
 import os
+import shutil
 import random
 import string
 import toml
@@ -155,7 +156,7 @@ class ParameterManager:
                                 'enter to delete the existing checkpoint %s\n'
                                 'or exit by type anything but not empty' % _dir)
                     if inp == '':
-                        os.remove(_dir)
+                        shutil.rmtree(_dir)
                     else:
                         exit()
 
@@ -208,7 +209,7 @@ class BatchFeeder:
         # Trim off any extra elements that wouldn't cleanly fit (remainders).
         seq = seq.narrow(0, 0, n_batch * self.batch_size)
         # Evenly divide the data across the bsz batches.
-        self._data = seq.view(self.batch_size, -1).contiguous()
+        self._data = seq.view(self.batch_size, -1).t().contiguous()
         if cuda and torch.cuda.device_count() >= 1:
             self._data.cuda()
 
@@ -225,11 +226,11 @@ class BatchFeeder:
         -----------------
         (inputs, outputs): list (batch_size, num_steps)
         """
-        if (self._index + 1) * self.num_steps + 1 > self._data.size(1):
+        if (self._index + 1) * self.num_steps + 1 > self._data.size(0):
             self._index = 0
             raise StopIteration
-        x = self._data[:, self._index * self.num_steps:(self._index + 1) * self.num_steps]
-        y = self._data[:, self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1]
+        x = self._data[self._index * self.num_steps:(self._index + 1) * self.num_steps, :]
+        y = self._data[self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1, :]
         self._index += 1
         return x, y
 
@@ -329,6 +330,7 @@ class Net(nn.Module):
         self.__n_hidden_units = n_hidden_units
         self.__embedding_dim = embedding_dim
         self.__tie_weights = tie_weights
+        self.__vocab_size = vocab_size
         self.__init_weights(init_range=init_range)
 
     def __init_weights(self, init_range: float):
@@ -337,7 +339,7 @@ class Net(nn.Module):
         if not self.__tie_weights:
             self.__decoding_layer.weight.data.uniform_(-init_range, init_range)
 
-    def init_state(self, batch_size: int):
+    def init_state(self, batch_size: int, cuda: bool=True):
         """ get initial state of recurrent cell: list of tensor (layer, batch, dim) """
 
         def __init_state(i):
@@ -345,48 +347,71 @@ class Net(nn.Module):
                 units = self.__embedding_dim
             else:
                 units = self.__n_hidden_units
-            state = torch.zeros((1, batch_size, units), dtype=torch.float32)
-            if torch.cuda.device_count() >= 1:
-                state.cuda()
+            if cuda and torch.cuda.device_count() >= 1:
+                state = [torch.zeros((1, batch_size, units), dtype=torch.float32).cuda(),
+                         torch.zeros((1, batch_size, units), dtype=torch.float32).cuda()]
+            else:
+                state = [torch.zeros((1, batch_size, units), dtype=torch.float32),
+                         torch.zeros((1, batch_size, units), dtype=torch.float32)]
             return state
 
         return [__init_state(i) for i in range(self.__n_layers)]
 
-    def forward(self, input_token, hidden=None):
+    def forward(self, input_token, hidden=None, cuda: bool=True):
         """ model output
 
          Parameter
         -------------
-        input_token: input token id batche tensor (batch, sequence_length)
+        input_token: input token id batch tensor (sequence_length, batch)
         hidden: list of two tensors, each has (layer, batch, dim) shape
 
          Return
         -------------
-        output: (batch, sequence_length)
+        (output, prob, pred):
+            output: raw output from LSTM (sequence_length, batch, vocab size)
+            prob: softmax activated output (sequence_length, batch, vocab size)
+            pred: prediction (sequence_length, batch)
         new_hidden: list of tensor (layer, batch, dim)
         """
 
         if hidden is None:
-            hidden = self.init_state(input_token.shape[0])
-
-        emb = self.__embedding_lookup(self.__embedding_layer, input_token)  # lookup embedding matrix
+            hidden = self.init_state(input_token.shape[1], cuda=cuda)
+        # print([i.shape for i in hidden])
+        emb = self.__embedding_lookup(self.__embedding_layer, input_token)  # lookup embedding matrix (seq, batch, dim)
         emb = self.__dropout_embedding(emb)  # dropout embeddings
         new_hidden = []  # hidden states
 
-        # LSTM input is (sequence, batch, dim)
-        input_token = input_token.t()
-
-
-        for i, cell in enumerate(self.__cells):
-            emb, new_h = cell(emb, hidden[i])
+        for i, (h, cell) in enumerate(zip(hidden, self.__cells)):
+            # LSTM input is (sequence, batch, dim)
+            emb, new_h = cell(emb, h)
+            # detach hidden state from the graph to not propagate gradient (treat as a constant)
+            new_h = self.repackage_hidden(new_h)
             new_hidden.append(new_h)
             if i == self.__n_layers - 1:
                 emb = self.__dropout_output(emb)
             else:
                 emb = self.__dropout_intermediate(emb)
 
+        # (seq, batch, dim) -> (seq * batch, dim)
         output = emb.view(emb.size(0) * emb.size(1), emb.size(2))
-        return output, new_hidden
+        # (seq * batch, dim) -> (seq * batch, vocab)
+        output = self.__decoding_layer(output)
+        _, pred = torch.max(output, dim=-1)
+        prob = torch.nn.functional.softmax(output, dim=1)
+        # (seq * batch, vocab) -> (seq, batch, vocab)
+        output = output.view(emb.size(0), emb.size(1), self.__vocab_size)
+        prob = prob.view(emb.size(0), emb.size(1), self.__vocab_size)
+        # (seq * batch, vocab) -> (seq, batch,)
+        pred = pred.view(emb.size(0), emb.size(1))
+        return (output, prob, pred), new_hidden
+
+    def repackage_hidden(self, h):
+        """Wraps hidden states in new Tensors, to detach them from their history."""
+
+        if isinstance(h, torch.Tensor):
+            return h.detach()
+        else:
+            return tuple(self.repackage_hidden(v) for v in h)
 
 
 class LanguageModel:
@@ -470,7 +495,7 @@ class LanguageModel:
               data_test: list=None):
         """ train model """
         best_model_wts = copy.deepcopy(self.__net.state_dict())
-        best_acc = 0
+        best_ppl = 0
         best_epoch = 0
 
         self.__logger.debug('initialize batch feeder')
@@ -487,24 +512,24 @@ class LanguageModel:
         try:
             for e in range(epoch):  # loop over the epoch
 
-                loss, acc = self.__epoch_train(loader_train, epoch_n=e)
-                self.__logger.debug('[epoch %i/%i] (train) loss: %.3f, acc: %.3f' % (e, epoch, loss, acc))
+                loss, ppl = self.__epoch_train(loader_train, epoch_n=e)
+                self.__logger.debug('[epoch %i/%i] (train) loss: %.3f, ppl: %.3f' % (e, epoch, loss, ppl))
 
-                loss, acc = self.__epoch_valid(loader_valid, epoch_n=e)
-                self.__logger.debug('[epoch %i/%i] (valid) loss: %.3f, acc: %.3f' % (e, epoch, loss, acc))
+                loss, ppl = self.__epoch_valid(loader_valid, epoch_n=e)
+                self.__logger.debug('[epoch %i/%i] (valid) loss: %.3f, ppl: %.3f' % (e, epoch, loss, ppl))
 
-                if acc > best_acc:
+                if ppl > best_ppl:
                     best_model_wts = copy.deepcopy(self.__net.state_dict())
                     best_epoch = e
-                    best_acc = acc
+                    best_ppl = ppl
             if loader_test:
-                loss, acc = self.__epoch_valid(loader_test)
-                self.__logger.debug('(test) loss: %.3f, acc: %.3f' % (loss, acc))
+                loss, ppl = self.__epoch_valid(loader_test)
+                self.__logger.debug('(test) loss: %.3f, acc: %.3f' % (loss, ppl))
         except KeyboardInterrupt:
             self.__logger.info('*** KeyboardInterrupt ***')
 
         self.__writer.close()
-        self.__logger.debug('best model: epoch %i, valid accuracy %0.3f' % (best_epoch, best_acc))
+        self.__logger.debug('best model: epoch %i, valid accuracy %0.3f' % (best_epoch, best_ppl))
         torch.save(best_model_wts, self.__checkpoint_model)
         self.__logger.debug('complete training: best model ckpt was saved at %s' % self.__checkpoint_model)
 
@@ -513,88 +538,80 @@ class LanguageModel:
                       epoch_n: int):
         """ single epoch process for training """
         self.__net.train()
-        mean_loss = 0.0
-        correct_count = 0.0
-        data_size = 0.0
-        inst_loss = 0.0
+        perplexity = -100
         hidden_state = None
+        full_seq_length = 0
+        full_loss = 0
 
         for i, data in enumerate(data_loader, 1):
             # get the inputs (data is a list of [inputs, labels])
-            inputs, labels = data
+            inputs, outputs = data
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
-            output, hidden_state = self.__net(inputs, hidden_state)
-            _, pred = torch.max(logit, 1)
-
-            tmp_loss = self.__loss(logit, labels)
+            (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+            # hidden_state = hidden_state.detach()
             # backward: calculate gradient
+            logit = logit.view(-1, logit.size(-1))
+            outputs = outputs.view(-1)
+            tmp_loss = self.__loss(logit, outputs)
             tmp_loss.backward()
             # gradient clip
             if self.__param('clip') is not None:
                 nn.utils.clip_grad_norm_(self.__net.parameters(), self.__param('clip'))
             # optimize
             self.__optimizer.step()
-            # accuracy
-            correct_count += ((pred == labels).cpu().float().sum()).item()
-            data_size += len(labels)
-
             # log
-            loss = tmp_loss.cpu().item()
-            self.__writer.add_scalar('train/loss', loss, i + epoch_n * len(data_loader))
-            self.__writer.add_scalar('train/accuracy', correct_count / data_size, i + epoch_n * len(data_loader))
-            inst_loss += loss
-            mean_loss += loss
+            tmp_loss = tmp_loss.cpu().item()
+            full_loss += len(inputs) * tmp_loss
+            full_seq_length += len(inputs)
+            perplexity = np.exp(min(30, full_loss / full_seq_length))
+            self.__writer.add_scalar('train/loss', tmp_loss, i + epoch_n * len(data_loader))
+            self.__writer.add_scalar('train/perplexity', perplexity, i + epoch_n * len(data_loader))
 
             if i % self.__progress_interval == 0:
-                inst_loss = inst_loss / self.__progress_interval
-                self.__logger.debug(' * (%i/%i) instant loss: %.3f' % (i, len(data_loader), inst_loss))
-                inst_loss = 0.0
+                self.__logger.debug(' * (%i/%i) loss: %.3f, ppl: %.3f' % (i, len(data_loader), tmp_loss, perplexity))
 
-        mean_loss = mean_loss / len(data_loader)
-        mean_accuracy = correct_count / data_size
-        return mean_loss, mean_accuracy
+        mean_loss = full_loss / full_seq_length
+        return mean_loss, perplexity
 
     def __epoch_valid(self,
                       data_loader,
                       epoch_n: int):
         """ single epoch process for validation """
         self.__net.eval()
-        mean_loss = 0.0
-        correct_count = 0.0
-        data_size = 0.0
-
+        hidden_state = None
+        full_seq_length = 0
+        full_loss = 0
         for data in data_loader:
-            inputs, labels = data
-            logit = self.__net(inputs)
-            _, pred = torch.max(logit, 1)
-            correct_count += ((pred == labels).cpu().float().sum()).item()
-            mean_loss += self.__loss(logit, labels).cpu().item()
-            data_size += len(labels)
-        self.__writer.add_scalar('valid/loss', mean_loss / len(data_loader), epoch_n)
-        self.__writer.add_scalar('valid/accuracy', correct_count / data_size, epoch_n)
-        mean_loss = mean_loss / len(data_loader)
-        mean_accuracy = correct_count / data_size
-        return mean_loss, mean_accuracy
+            inputs, outputs = data
+            (output, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+            tmp_loss = self.__loss(output, outputs)
+            tmp_loss = tmp_loss.cpu().item()
+            full_loss += len(inputs) * tmp_loss
+            full_seq_length += len(inputs)
+        mean_loss = full_loss / full_seq_length
+        perplexity = np.exp(min(30, full_loss / full_seq_length))
+        self.__writer.add_scalar('valid/perplexity', perplexity, epoch_n)
+        self.__writer.add_scalar('valid/loss', mean_loss, epoch_n)
+        return mean_loss, perplexity
 
     def __epoch_test(self, data_loader):
         """ single epoch process for test """
         self.__net.eval()
-        mean_loss = 0.0
-        correct_count = 0.0
-        data_size = 0.0
-
+        hidden_state = None
+        full_seq_length = 0
+        full_loss = 0
         for data in data_loader:
-            inputs, labels = data
-            logit = self.__net(inputs)
-            _, pred = torch.max(logit, 1)
-            correct_count += ((pred == labels).cpu().float().sum()).item()
-            mean_loss += self.__loss(logit, labels).cpu().item()
-            data_size += len(labels)
-        mean_loss = mean_loss / len(data_loader)
-        mean_accuracy = correct_count / data_size
-        return mean_loss, mean_accuracy
+            inputs, outputs = data
+            (output, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+            tmp_loss = self.__loss(output, outputs)
+            tmp_loss = tmp_loss.cpu().item()
+            full_loss += len(inputs) * tmp_loss
+            full_seq_length += len(inputs)
+        mean_loss = full_loss / full_seq_length
+        perplexity = np.exp(min(30, full_loss / full_seq_length))
+        return mean_loss, perplexity
 
 
 if __name__ == '__main__':

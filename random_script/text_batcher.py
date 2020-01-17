@@ -32,7 +32,8 @@ class BatchFeeder:
         # Trim off any extra elements that wouldn't cleanly fit (remainders).
         seq = seq.narrow(0, 0, n_batch * self.batch_size)
         # Evenly divide the data across the bsz batches.
-        self._data = seq.view(self.batch_size, -1).contiguous()
+        self._data = seq.view(self.batch_size, -1).t().contiguous()
+        print(self._data.shape)
         if cuda and torch.cuda.device_count() >= 1:
             self._data.cuda()
 
@@ -49,11 +50,11 @@ class BatchFeeder:
         -----------------
         (inputs, outputs): list (batch_size, num_steps)
         """
-        if (self._index + 1) * self.num_steps + 1 > self._data.size(1):
+        if (self._index + 1) * self.num_steps + 1 > self._data.size(0):
             self._index = 0
             raise StopIteration
-        x = self._data[:, self._index * self.num_steps:(self._index + 1) * self.num_steps]
-        y = self._data[:, self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1]
+        x = self._data[self._index * self.num_steps:(self._index + 1) * self.num_steps, :]
+        y = self._data[self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1, :]
         self._index += 1
         return x, y
 

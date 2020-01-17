@@ -9,6 +9,7 @@ import os
 # for logger
 import logging
 from logging.config import dictConfig
+import json
 
 
 def create_log():
@@ -60,7 +61,7 @@ def get_tokenizer(name, checkpoint_dir=None, checkpoint_name=None):
     elif name == 'SentencePieceBPETokenizer':
         return tokenizers.SentencePieceBPETokenizer(vocab, merges), if_trained
     elif name == 'BertWordPieceTokenizer':
-        return tokenizers.BertWordPieceTokenizer(vocab, merges), if_trained
+        return tokenizers.BertWordPieceTokenizer(vocab), if_trained
     else:
         raise ValueError('unknown tokenizer %s, should be one of %s' % (name, str(valid_models)))
 
@@ -95,42 +96,44 @@ def get_options():
 
 
 if __name__ == '__main__':
-    logger = create_log()
+    _logger = create_log()
     arguments = get_options()
 
-    logger.info('tokenizer: %s' % arguments.tokenizer)
+    _logger.info('tokenizer: %s' % arguments.tokenizer)
     save_dir = os.path.join("./vocab", arguments.tokenizer)
     tokenizer, if_trained_flg = get_tokenizer(arguments.tokenizer, checkpoint_dir=save_dir, checkpoint_name=arguments.data)
 
-    logger.info('dataset: %s' % arguments.data)
+    _logger.info('dataset: %s' % arguments.data)
     file_paths = get_data(arguments.data)
 
     # train tokenizer
     if not if_trained_flg:
-        logger.info('start training tokenizer')
-        tokenizer.train(file_paths)
+        _logger.info('start training tokenizer')
+        tokenizer.train(file_paths, vocab_size=30000)
         save_dir = os.path.join("./vocab", arguments.tokenizer)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
         tokenizer.save(save_dir, arguments.data)
-        logger.info('saved tokenizer at %s' % save_dir)
+        vocab_size = len(json.load(open('./vocab/%s/%s-vocab.json' % (arguments.tokenizer, arguments.data))))
+        _logger.info('saved tokenizer at %s' % save_dir)
+        _logger.info('vocab: %i' % vocab_size)
 
     else:
-        logger.info('load trained tokenizer')
+        _logger.info('load trained tokenizer')
 
     # test encoding
-    logger.info('test encoding')
+    _logger.info('test encoding')
     with open(file_paths[-1], 'r') as f:
         for n, test in enumerate(f.read().split('<eos>')):
             encoded = tokenizer.encode(test)
-            logger.info(' sample %i \n * %s \n * %s' % (n, test, str(encoded.tokens)))
+            _logger.info(' sample %i \n * %s \n * %s' % (n, test, str(encoded.tokens)))
             if n > 10:
                 break
 
     # tokenize full corpus
-    logger.info('tokenize corpus')
+    _logger.info('tokenize corpus')
     for _file in file_paths:
-        logger.info(' - converting file %s' % _file)
+        _logger.info(' - converting file %s' % _file)
         with open(_file, 'r') as f:
             token_ids = ' '.join([str(i) for i in tokenizer.encode(f.read()).ids])
             # token_ids_list = []
@@ -141,7 +144,7 @@ if __name__ == '__main__':
         _file = _file.replace('.txt', '.id.txt')
         with open(_file, 'w') as f:
             f.write(token_ids)
-        logger.info(' - saved at %s' % _file)
+        _logger.info(' - saved at %s' % _file)
 
     # save
     if not if_trained_flg:
@@ -149,6 +152,6 @@ if __name__ == '__main__':
         if not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
         tokenizer.save(save_dir, arguments.data)
-        logger.info('saved at %s' % save_dir)
+        _logger.info('saved at %s' % save_dir)
 
 
