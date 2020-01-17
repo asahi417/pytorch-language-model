@@ -72,7 +72,16 @@ def get_data(name):
         file_path_train = './data/penn-treebank/ptb.train.txt'
         file_path_valid = './data/penn-treebank/ptb.valid.txt'
         file_path_test = './data/penn-treebank/ptb.test.txt'
-        return file_path_train, file_path_valid, file_path_test
+        output_files = []
+        for __file in [file_path_train, file_path_valid, file_path_test]:
+            __file_output = __file.replace('.txt', '.eos.txt')
+            output_files.append(__file_output)
+            if os.path.exists(__file_output):
+                continue
+            with open(__file, 'r') as _f_r:
+                with open(__file_output, 'w') as _f_w:
+                    _f_w.write(_f_r.read().replace('\n', '<eos>'))
+        return output_files
     else:
         raise ValueError('unknown data %s' % name)
 
@@ -100,13 +109,19 @@ if __name__ == '__main__':
     if not if_trained_flg:
         logger.info('start training tokenizer')
         tokenizer.train(file_paths)
+        save_dir = os.path.join("./vocab", arguments.tokenizer)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
+        tokenizer.save(save_dir, arguments.data)
+        logger.info('saved tokenizer at %s' % save_dir)
+
     else:
         logger.info('load trained tokenizer')
 
     # test encoding
     logger.info('test encoding')
     with open(file_paths[-1], 'r') as f:
-        for n, test in enumerate(f.read().split('\n')):
+        for n, test in enumerate(f.read().split('<eos>')):
             encoded = tokenizer.encode(test)
             logger.info(' sample %i \n * %s \n * %s' % (n, test, str(encoded.tokens)))
             if n > 10:
@@ -116,13 +131,14 @@ if __name__ == '__main__':
     logger.info('tokenize corpus')
     for _file in file_paths:
         logger.info(' - converting file %s' % _file)
-        token_ids_list = []
         with open(_file, 'r') as f:
-            for n, text in enumerate(f.read().split('\n')):
-                encoded_ids = tokenizer.encode(text).ids
-                token_ids_list.append(' '.join([str(i) for i in encoded_ids]))
-        token_ids = '\n'.join(token_ids_list)
-        _file = _file.replace('.txt', '_id.txt')
+            token_ids = ' '.join([str(i) for i in tokenizer.encode(f.read()).ids])
+            # token_ids_list = []
+            # for n, text in enumerate(f.read().split('<eos>')):
+            #     encoded_ids = tokenizer.encode(text).ids
+            #     token_ids_list.append(' '.join([str(i) for i in encoded_ids]))
+        # token_ids = '\n'.join(token_ids_list)
+        _file = _file.replace('.txt', '.id.txt')
         with open(_file, 'w') as f:
             f.write(token_ids)
         logger.info(' - saved at %s' % _file)

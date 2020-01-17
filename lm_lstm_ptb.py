@@ -179,6 +179,61 @@ class ParameterManager:
                 return target_checkpoints_path, parameter
 
 
+class BatchFeeder:
+    """ Pytorch batch feeding iterator for language model training """
+
+    def __init__(self,
+                 batch_size,
+                 num_steps,
+                 sequence,
+                 cuda: bool=False):
+        """ Pytorch batch feeding iterator for language model training
+
+         Parameter
+        -------------------
+        batch_size: int
+            batch size
+        num_steps: int
+            sequence truncation size
+        sequence: list
+            integer token id sequence to feed
+        """
+        self._index = 0
+        self.batch_size = batch_size
+        self.num_steps = num_steps
+        seq = torch.LongTensor(sequence)
+        self.data_size = seq.size(0)
+
+        n_batch = self.data_size // self.batch_size
+        # Trim off any extra elements that wouldn't cleanly fit (remainders).
+        seq = seq.narrow(0, 0, n_batch * self.batch_size)
+        # Evenly divide the data across the bsz batches.
+        self._data = seq.view(self.batch_size, -1).contiguous()
+        if cuda and torch.cuda.device_count() >= 1:
+            self._data.cuda()
+
+    def __len__(self):
+        return (self.data_size // self.batch_size - 1) // self.num_steps
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        """ next batch for train data (size is `self._batch_size`) loop for self._iteration_number
+
+         Return
+        -----------------
+        (inputs, outputs): list (batch_size, num_steps)
+        """
+        if (self._index + 1) * self.num_steps + 1 > self._data.size(1):
+            self._index = 0
+            raise StopIteration
+        x = self._data[:, self._index * self.num_steps:(self._index + 1) * self.num_steps]
+        y = self._data[:, self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1]
+        self._index += 1
+        return x, y
+
+
 class LockedDropout(nn.Module):
     """ locked dropout/variational dropout described in https://arxiv.org/pdf/1708.02182.pdf
     * drop all the feature in target batch, instead of fully random dropout
@@ -302,14 +357,13 @@ class Net(nn.Module):
 
          Parameter
         -------------
-        input_token: input token id batche tensor (batch, )
-        hidden: list of tensor (layer, batch, dim)
+        input_token: input token id batche tensor (batch, sequence_length)
+        hidden: list of two tensors, each has (layer, batch, dim) shape
 
          Return
         -------------
-        x: logit (batch, dim)
-        y: prediction (batch, )
-        p: probability (batch, dim)
+        output: (batch, sequence_length)
+        new_hidden: list of tensor (layer, batch, dim)
         """
 
         if hidden is None:
@@ -318,6 +372,10 @@ class Net(nn.Module):
         emb = self.__embedding_lookup(self.__embedding_layer, input_token)  # lookup embedding matrix
         emb = self.__dropout_embedding(emb)  # dropout embeddings
         new_hidden = []  # hidden states
+
+        # LSTM input is (sequence, batch, dim)
+        input_token = input_token.t()
+
 
         for i, cell in enumerate(self.__cells):
             emb, new_h = cell(emb, hidden[i])
@@ -406,22 +464,25 @@ class LanguageModel:
             self.__logger.debug(' - [param] %s: %s' % (k, str(v)))
 
     def train(self,
-              data_train,
-              data_valid,
-              epoch: int):
+              epoch: int,
+              data_train: list,
+              data_valid: list,
+              data_test: list=None):
         """ train model """
         best_model_wts = copy.deepcopy(self.__net.state_dict())
         best_acc = 0
         best_epoch = 0
 
-        assert data_train.classes == data_valid.classes
-        assert len(data_train.classes) == self.__param('label_size')
-
-        self.__logger.debug('data loader instance')
-        loader_train = torch.utils.data.DataLoader(
-            data_train, batch_size=self.__param('batch_size'), shuffle=True, num_workers=4)
-        loader_valid = torch.utils.data.DataLoader(
-            data_valid, batch_size=self.__param('batch_size'), shuffle=False, num_workers=4)
+        self.__logger.debug('initialize batch feeder')
+        loader_train = BatchFeeder(
+            batch_size=self.__param('batch_size'), num_steps=self.__param('sequence_length'), sequence=data_train, cuda=self.if_use_gpu)
+        loader_valid = BatchFeeder(
+            batch_size=self.__param('batch_size'), num_steps=self.__param('sequence_length'), sequence=data_valid, cuda=self.if_use_gpu)
+        if data_test:
+            loader_test = BatchFeeder(
+                batch_size=self.__param('batch_size'), num_steps=self.__param('sequence_length'), sequence=data_test, cuda=self.if_use_gpu)
+        else:
+            loader_test = None
 
         try:
             for e in range(epoch):  # loop over the epoch
@@ -436,7 +497,9 @@ class LanguageModel:
                     best_model_wts = copy.deepcopy(self.__net.state_dict())
                     best_epoch = e
                     best_acc = acc
-
+            if loader_test:
+                loss, acc = self.__epoch_valid(loader_test)
+                self.__logger.debug('(test) loss: %.3f, acc: %.3f' % (loss, acc))
         except KeyboardInterrupt:
             self.__logger.info('*** KeyboardInterrupt ***')
 
@@ -454,16 +517,15 @@ class LanguageModel:
         correct_count = 0.0
         data_size = 0.0
         inst_loss = 0.0
+        hidden_state = None
 
         for i, data in enumerate(data_loader, 1):
             # get the inputs (data is a list of [inputs, labels])
             inputs, labels = data
-            if self.if_use_gpu:
-                inputs, labels = inputs.cuda(), labels.cuda()
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
-            logit = self.__net(inputs)
+            output, hidden_state = self.__net(inputs, hidden_state)
             _, pred = torch.max(logit, 1)
 
             tmp_loss = self.__loss(logit, labels)
@@ -505,8 +567,6 @@ class LanguageModel:
 
         for data in data_loader:
             inputs, labels = data
-            if self.if_use_gpu:
-                inputs, labels = inputs.cuda(), labels.cuda()
             logit = self.__net(inputs)
             _, pred = torch.max(logit, 1)
             correct_count += ((pred == labels).cpu().float().sum()).item()
@@ -518,10 +578,36 @@ class LanguageModel:
         mean_accuracy = correct_count / data_size
         return mean_loss, mean_accuracy
 
+    def __epoch_test(self, data_loader):
+        """ single epoch process for test """
+        self.__net.eval()
+        mean_loss = 0.0
+        correct_count = 0.0
+        data_size = 0.0
+
+        for data in data_loader:
+            inputs, labels = data
+            logit = self.__net(inputs)
+            _, pred = torch.max(logit, 1)
+            correct_count += ((pred == labels).cpu().float().sum()).item()
+            mean_loss += self.__loss(logit, labels).cpu().item()
+            data_size += len(labels)
+        mean_loss = mean_loss / len(data_loader)
+        mean_accuracy = correct_count / data_size
+        return mean_loss, mean_accuracy
+
 
 if __name__ == '__main__':
-    data_train = './data/penn-treebank/ptb_train_id.txt'
-    data_test = './data/penn-treebank/ptb_test_id.txt'
-    data_valid = './data/penn-treebank/ptb_valid_id.txt'
+    with open('./data/penn-treebank/ptb.train.eos.id.txt', 'r') as f:
+        _data_train = [int(i) for i in f.read().split()]
+    with open('./data/penn-treebank/ptb.valid.eos.id.txt', 'r') as f:
+        _data_valid = [int(i) for i in f.read().split()]
+    with open('./data/penn-treebank/ptb.test.eos.id.txt', 'r') as f:
+        _data_test = [int(i) for i in f.read().split()]
 
-    # LanguageModel(checkpoint_dir='./ckpt/lm_lstm_ptb')
+    _model = LanguageModel(checkpoint_dir='./ckpt/lm_lstm_ptb')
+    _model.train(epoch=1000,
+                 data_train=_data_train,
+                 data_valid=_data_valid,
+                 data_test=_data_test)
+

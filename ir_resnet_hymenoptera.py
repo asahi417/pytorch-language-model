@@ -372,7 +372,8 @@ if __name__ == '__main__':
     data_dir_train = './data/hymenoptera_data/train'
     data_dir_val = './data/hymenoptera_data/val'
     if not os.path.exists(data_dir_train) or not os.path.exists(data_dir_train):
-        raise ValueError('please download data from `https://download.pytorch.org/tutorial/hymenoptera_data.zip`')
+        raise ValueError('please download data from `https://download.pytorch.org/tutorial/hymenoptera_data.zip` and'
+                         'put it under `./data`')
 
     dataset_train = torchvision.datasets.ImageFolder(data_dir_train, data_transforms['train'])
     dataset_val = torchvision.datasets.ImageFolder(data_dir_val, data_transforms['val'])
