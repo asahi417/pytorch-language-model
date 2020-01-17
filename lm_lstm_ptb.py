@@ -186,8 +186,7 @@ class BatchFeeder:
     def __init__(self,
                  batch_size,
                  num_steps,
-                 sequence,
-                 cuda: bool=True):
+                 sequence):
         """ Pytorch batch feeding iterator for language model training
 
          Parameter
@@ -210,7 +209,7 @@ class BatchFeeder:
         seq = seq.narrow(0, 0, n_batch * self.batch_size)
         # Evenly divide the data across the bsz batches.
         self._data = seq.view(self.batch_size, -1).t().contiguous()
-        if cuda and torch.cuda.device_count() >= 1:
+        if torch.cuda.device_count() >= 1:
             self._data = self._data.cuda()
 
     def __len__(self):
@@ -339,7 +338,7 @@ class Net(nn.Module):
         if not self.__tie_weights:
             self.__decoding_layer.weight.data.uniform_(-init_range, init_range)
 
-    def init_state(self, batch_size: int, cuda: bool=True):
+    def init_state(self, batch_size: int):
         """ get initial state of recurrent cell: list of tensor (layer, batch, dim) """
 
         def __init_state(i):
@@ -347,7 +346,7 @@ class Net(nn.Module):
                 units = self.__embedding_dim
             else:
                 units = self.__n_hidden_units
-            if cuda and torch.cuda.device_count() >= 1:
+            if torch.cuda.device_count() >= 1:
                 state = [torch.zeros((1, batch_size, units), dtype=torch.float32).cuda(),
                          torch.zeros((1, batch_size, units), dtype=torch.float32).cuda()]
             else:
@@ -418,7 +417,7 @@ class LanguageModel:
     """ LSTM bases language model """
 
     def __init__(self,
-                 progress_interval: int = 20000,
+                 progress_interval: int = 1000,
                  checkpoint_dir: str = None,
                  **kwargs):
         """ LSTM bases language model
@@ -500,12 +499,12 @@ class LanguageModel:
 
         self.__logger.debug('initialize batch feeder')
         loader_train = BatchFeeder(
-            batch_size=self.__param('batch_size'), num_steps=self.__param('sequence_length'), sequence=data_train, cuda=self.if_use_gpu)
+            batch_size=self.__param('batch_size'), num_steps=self.__param('sequence_length'), sequence=data_train)
         loader_valid = BatchFeeder(
-            batch_size=self.__param('batch_size'), num_steps=self.__param('sequence_length'), sequence=data_valid, cuda=self.if_use_gpu)
+            batch_size=self.__param('batch_size'), num_steps=self.__param('sequence_length'), sequence=data_valid)
         if data_test:
             loader_test = BatchFeeder(
-                batch_size=self.__param('batch_size'), num_steps=self.__param('sequence_length'), sequence=data_test, cuda=self.if_use_gpu)
+                batch_size=self.__param('batch_size'), num_steps=self.__param('sequence_length'), sequence=data_test)
         else:
             loader_test = None
 
@@ -546,9 +545,6 @@ class LanguageModel:
         for i, data in enumerate(data_loader, 1):
             # get the inputs (data is a list of [inputs, labels])
             inputs, outputs = data
-            # if self.if_use_gpu:
-            #     inputs = inputs.cuda()
-            #     outputs = outputs.cuda()
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
@@ -588,9 +584,6 @@ class LanguageModel:
         full_loss = 0
         for data in data_loader:
             inputs, outputs = data
-            # if self.if_use_gpu:
-            #     inputs = inputs.cuda()
-            #     outputs = outputs.cuda()
             (output, prob, pred), hidden_state = self.__net(inputs, hidden_state)
             tmp_loss = self.__loss(output, outputs)
             tmp_loss = tmp_loss.cpu().item()
@@ -610,9 +603,6 @@ class LanguageModel:
         full_loss = 0
         for data in data_loader:
             inputs, outputs = data
-            # if self.if_use_gpu:
-            #     inputs = inputs.cuda()
-            #     outputs = outputs.cuda()
             (output, prob, pred), hidden_state = self.__net(inputs, hidden_state)
             tmp_loss = self.__loss(output, outputs)
             tmp_loss = tmp_loss.cpu().item()
