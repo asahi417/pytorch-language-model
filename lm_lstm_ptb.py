@@ -453,8 +453,14 @@ class LanguageModel:
         else:
             self.if_use_gpu = False
         # optimizer
-        self.__optimizer = optim.Adam(
-            self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
+        if self.__param('optimizer') == 'adam':
+            self.__optimizer = optim.Adam(
+                self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
+        elif self.__param('optimizer') == 'sgd':
+            self.__optimizer = optim.SGD(
+                self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
+        else:
+            raise ValueError('unknown optimizer %s' % self.__param('optimizer'))
 
         # loss definition (CrossEntropyLoss includes softmax inside)
         self.__loss = nn.CrossEntropyLoss()
