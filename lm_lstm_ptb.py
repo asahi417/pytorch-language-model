@@ -634,5 +634,6 @@ if __name__ == '__main__':
     _model.train(epoch=1000,
                  data_train=_data_train,
                  data_valid=_data_valid,
-                 data_test=_data_test)
+                 data_test=_data_test,
+                 progress_interval=20)
 
