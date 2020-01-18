@@ -631,7 +631,7 @@ if __name__ == '__main__':
         _data_test = [int(i) for i in f.read().split()]
 
     _model = LanguageModel(checkpoint_dir='./ckpt/lm_lstm_ptb')
-    _model.train(epoch=1000,
+    _model.train(epoch=150,
                  data_train=_data_train,
                  data_valid=_data_valid,
                  data_test=_data_test,
