@@ -28,13 +28,11 @@ python lm_lstm_ptb.py
 Hyperparameter can be changed by editing [toml file](./parameters/lm_lstm_ptb.toml),
 and here is a brief result with different learning rate settings.
 
-| Learning Rate | perplexity (train) | perplexity (valid) |
-| ------------- |:------------------:|:------------------:|
-| 0.005         |                    |                    |
-| 0.005         |                    |                    |
-| 0.005         |                    |                    |
-| 0.005         |                    |                    |
-
+| Learning Rate | perplexity (valid) | epoch |
+| ------------- |:------------------:|:-----:|
+| 0.001         |            88.49   | 142   |
+| 0.0005        |            96.18   | 229   |
+| 0.0001        |            90.89   | 131   |
 
 
 ### Others
