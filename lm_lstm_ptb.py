@@ -317,7 +317,7 @@ class Net(nn.Module):
         self.__cells = nn.ModuleList(cells)
 
         self.__embedding_layer = nn.Embedding(vocab_size, embedding_dim)
-        self.__decoding_layer = nn.Linear(embedding_dim, vocab_size)
+        self.__decoding_layer = nn.Linear(embedding_dim, vocab_size, bias=False)
 
         if tie_weights:
             # nn.Embedding(a, b).weight.shape -> (a, b), while nn.Linear(a, b) -> (b, a)
