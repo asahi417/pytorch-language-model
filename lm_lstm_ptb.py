@@ -522,18 +522,18 @@ class LanguageModel:
                 loss, ppl = self.__epoch_valid(loader_valid, epoch_n=e)
                 self.__logger.debug('[epoch %i/%i] (valid) loss: %.3f, ppl: %.3f' % (e, epoch, loss, ppl))
 
-                if ppl > best_ppl:
+                if ppl < best_ppl:
                     best_model_wts = copy.deepcopy(self.__net.state_dict())
                     best_epoch = e
                     best_ppl = ppl
             if loader_test:
-                loss, ppl = self.__epoch_valid(loader_test)
+                loss, ppl = self.__epoch_test(loader_test)
                 self.__logger.debug('(test) loss: %.3f, acc: %.3f' % (loss, ppl))
         except KeyboardInterrupt:
             self.__logger.info('*** KeyboardInterrupt ***')
 
         self.__writer.close()
-        self.__logger.debug('best model: epoch %i, valid accuracy %0.3f' % (best_epoch, best_ppl))
+        self.__logger.debug('best model: epoch %i, valid ppt %0.3f' % (best_epoch, best_ppl))
         torch.save(best_model_wts, self.__checkpoint_model)
         self.__logger.debug('complete training: best model ckpt was saved at %s' % self.__checkpoint_model)
 
