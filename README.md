@@ -1,8 +1,5 @@
 # Pytorch scripts
 Pytorch self-contained sample scripts:
-- logging instance loss
-- checkpoint manager (write/load checkpoint)
-- tensorboard visualization
 
 ## Contents
 All the script work with python>=3.6. 
@@ -13,8 +10,10 @@ cd pytorch-tutorial
 pip install -r requirement.txt
 ```
 
-### [LSTM Language Model](./lm_lstm_ptb.py)  
+### [LSTM Language Model on SentencePieceTokenizer](./lm_lstm_ptb.py)  
+
 Build PTB corpus by sentence piece  
+
 ```
 python corpus_tokenizer.py 
 ```
