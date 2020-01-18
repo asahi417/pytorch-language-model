@@ -417,7 +417,6 @@ class LanguageModel:
     """ LSTM bases language model """
 
     def __init__(self,
-                 progress_interval: int = 1000,
                  checkpoint_dir: str = None,
                  **kwargs):
         """ LSTM bases language model
@@ -465,7 +464,6 @@ class LanguageModel:
             self.__net.load_state_dict(torch.load(self.__checkpoint_model))
             self.__logger.debug('load ckpt from %s' % self.__checkpoint_model)
         # log
-        self.__progress_interval = progress_interval
         self.__writer = SummaryWriter(log_dir=self.__param.checkpoint_dir)
         self.__sanity_check()
 
@@ -491,7 +489,8 @@ class LanguageModel:
               epoch: int,
               data_train: list,
               data_valid: list,
-              data_test: list=None):
+              data_test: list=None,
+              progress_interval: int = 100):
         """ train model """
         best_model_wts = copy.deepcopy(self.__net.state_dict())
         best_ppl = 0
@@ -511,7 +510,7 @@ class LanguageModel:
         try:
             for e in range(epoch):  # loop over the epoch
 
-                loss, ppl = self.__epoch_train(loader_train, epoch_n=e)
+                loss, ppl = self.__epoch_train(loader_train, epoch_n=e, progress_interval=progress_interval)
                 self.__logger.debug('[epoch %i/%i] (train) loss: %.3f, ppl: %.3f' % (e, epoch, loss, ppl))
 
                 loss, ppl = self.__epoch_valid(loader_valid, epoch_n=e)
@@ -534,7 +533,8 @@ class LanguageModel:
 
     def __epoch_train(self,
                       data_loader,
-                      epoch_n: int):
+                      epoch_n: int,
+                      progress_interval: int = 100000):
         """ single epoch process for training """
         self.__net.train()
         perplexity = -100
@@ -567,7 +567,7 @@ class LanguageModel:
             self.__writer.add_scalar('train/loss', tmp_loss, i + epoch_n * len(data_loader))
             self.__writer.add_scalar('train/perplexity', perplexity, i + epoch_n * len(data_loader))
 
-            if i % self.__progress_interval == 0:
+            if i % progress_interval == 0:
                 self.__logger.debug(' * (%i/%i) loss: %.3f, ppl: %.3f' % (i, len(data_loader), tmp_loss, perplexity))
 
         mean_loss = full_loss / full_seq_length

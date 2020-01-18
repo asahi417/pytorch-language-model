@@ -1,4 +1,4 @@
-lr = 30
+lr = 0.001
 weight_decay = 1.2e-6
 clip = 0.25
 momentum = 0.9
