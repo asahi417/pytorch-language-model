@@ -499,7 +499,7 @@ class LanguageModel:
               progress_interval: int = 100):
         """ train model """
         best_model_wts = copy.deepcopy(self.__net.state_dict())
-        best_ppl = 0
+        best_ppl = 100000
         best_epoch = 0
 
         self.__logger.debug('initialize batch feeder')

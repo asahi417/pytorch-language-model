@@ -33,6 +33,7 @@ and here is a brief result with different learning rate settings.
 | 0.0005        |            96.18   | 229   |
 | 0.0001        |            90.89   | 131   |
 
+Test perplexity of the best model (learning rate as 0.001) is 86.73
 
 ### Others
 - [image recognition](./ir_cnn_cifar10.py)
