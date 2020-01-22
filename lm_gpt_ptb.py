@@ -255,7 +255,11 @@ class Net(nn.Module):
         """ Network Architecture """
         super().__init__()
 
+        # word embedding/decoding and position embedding
         self.word_embedding = nn.Embedding(vocab_size, n_embedding)
+        # nn.Embedding(a, b).weight.shape -> (a, b), while nn.Linear(a, b) -> (b, a)
+        self.word_decoding = nn.Linear(n_embedding, vocab_size, bias=False)
+        self.word_decoding.weight = self.word_embedding.weight
         self.position_embedding = nn.Embedding(n_context, n_embedding)
         self.embedding_dropout = nn.Dropout(embedding_dropout)
 
@@ -267,37 +271,6 @@ class Net(nn.Module):
             residual_dropout=residual_dropout,
             attention_dropout=attention_dropout
         )
-
-        # self.__decoding_layer = nn.Linear(embedding_dim, vocab_size, bias=False)
-
-        # if tie_weights:
-        #     # nn.Embedding(a, b).weight.shape -> (a, b), while nn.Linear(a, b) -> (b, a)
-        #     # so encoder's weight can be directly copied to decoder.
-        #     self.__decoding_layer.weight = self.__embedding_layer.weight
-
-    def __init_weights(self, init_range: float):
-        """ uniform weight initialization for encoding/decoding layer """
-        self.__embedding_layer.weight.data.uniform_(-init_range, init_range)
-        if not self.__tie_weights:
-            self.__decoding_layer.weight.data.uniform_(-init_range, init_range)
-
-    def init_state(self, batch_size: int):
-        """ get initial state of recurrent cell: list of tensor (layer, batch, dim) """
-
-        def __init_state(i):
-            if i == self.__n_layers - 1:
-                units = self.__embedding_dim
-            else:
-                units = self.__n_hidden_units
-            if torch.cuda.device_count() >= 1:
-                state = [torch.zeros((1, batch_size, units), dtype=torch.float32).cuda(),
-                         torch.zeros((1, batch_size, units), dtype=torch.float32).cuda()]
-            else:
-                state = [torch.zeros((1, batch_size, units), dtype=torch.float32),
-                         torch.zeros((1, batch_size, units), dtype=torch.float32)]
-            return state
-
-        return [__init_state(i) for i in range(self.__n_layers)]
 
     def forward(self, x, cached_key_value=None):
         """ model output
