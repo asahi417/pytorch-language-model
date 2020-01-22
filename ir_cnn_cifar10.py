@@ -194,6 +194,7 @@ class Net(nn.Module):
 
     def forward(self, x):
         """ model output
+
          Parameter
         -------------
         x: tensor (batch, height, width, ch)

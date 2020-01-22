@@ -1,0 +1,5 @@
+# https://github.com/pytorch/fairseq/blob/master/fairseq/models/transformer_lm.py#L270
+residual_dropout=0.1
+attention_dropout=0.1
+n_head=12
+n_embedding=1280
