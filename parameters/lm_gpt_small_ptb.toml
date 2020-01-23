@@ -1,0 +1,16 @@
+n_layer = 12
+n_embedding = 768
+n_state_ffn = 3072
+n_head = 12
+n_context = 1024
+residual_dropout = 0.1
+attention_dropout = 0.1
+embedding_dropout = 0.1
+vocab_size = 15432
+initializer_range = 0.02
+
+batch_size = 512
+
+optimizer = 'adam'
+lr = 0.01
+weight_decay = 2.5e-4

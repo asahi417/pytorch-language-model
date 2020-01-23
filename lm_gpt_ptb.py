@@ -6,6 +6,10 @@ reference
 - fairseq (torch)
     model https://github.com/pytorch/fairseq/blob/master/fairseq/models/transformer_lm.py
     transformer https://github.com/pytorch/fairseq/blob/master/fairseq/models/transformer.py
+
+Optimizer!!!
+https://github.com/huggingface/transformers/blob/master/examples/run_lm_finetuning.py
+https://github.com/huggingface/transformers/blob/90b7df444fc30d5f476e5ab32d1f89340998a28d/src/transformers/optimization.py#L96
 """
 
 # for model
@@ -13,7 +17,6 @@ import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.autograd import Variable
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
@@ -30,7 +33,7 @@ from glob import glob
 import logging
 from logging.config import dictConfig
 
-from transformer_module import TransformerDecoder
+from transformer_module import BaseGPT2
 
 
 def create_log():
@@ -237,127 +240,34 @@ class BatchFeeder:
         return x, y
 
 
-class Net(nn.Module):
-    """ Network Architecture: GPT, transformer-based Language Model """
+class GPT2:
+    """ GPT2 language model """
 
     def __init__(self,
-                 n_layer: int,
-                 n_embedding: int,
-                 n_state_ffn: int,
-                 n_head: int,
-                 n_context: int,
-                 residual_dropout: float,
-                 attention_dropout: float,
-                 embedding_dropout: float,
-                 vocab_size: int,
-                 tie_weights: bool,
-                 init_range: float):
-        """ Network Architecture """
-        super().__init__()
-
-        # word embedding/decoding and position embedding
-        self.word_embedding = nn.Embedding(vocab_size, n_embedding)
-        # nn.Embedding(a, b).weight.shape -> (a, b), while nn.Linear(a, b) -> (b, a)
-        self.word_decoding = nn.Linear(n_embedding, vocab_size, bias=False)
-        self.word_decoding.weight = self.word_embedding.weight
-        self.position_embedding = nn.Embedding(n_context, n_embedding)
-        self.embedding_dropout = nn.Dropout(embedding_dropout)
-
-        self.transformer_decoder = TransformerDecoder(
-            n_layer=n_layer,
-            n_embedding=n_embedding,
-            n_state_ffn=n_state_ffn,
-            n_head=n_head,
-            residual_dropout=residual_dropout,
-            attention_dropout=attention_dropout
-        )
-
-    def forward(self, x, cached_key_value=None):
-        """ model output
-
-         Parameter
-        -------------
-        x: input token id batch tensor (sequence_length, batch)
-        hidden: list of two tensors, each has (layer, batch, dim) shape
-
-         Return
-        -------------
-        (output, prob, pred):
-            output: raw output from LSTM (sequence_length, batch, vocab size)
-            prob: softmax activated output (sequence_length, batch, vocab size)
-            pred: prediction (sequence_length, batch)
-        new_hidden: list of tensor (layer, batch, dim)
-        """
-
-        w_embedding = self.word_embedding(x)
-        w_embedding = self.word_embedding(x)
-        emb = self.__dropout_embedding(emb)  # dropout embeddings
-        new_hidden = []  # hidden states
-
-        for i, (h, cell) in enumerate(zip(hidden, self.__cells)):
-            # LSTM input is (sequence, batch, dim)
-            emb, new_h = cell(emb, h)
-            # detach hidden state from the graph to not propagate gradient (treat as a constant)
-            new_h = self.repackage_hidden(new_h)
-            new_hidden.append(new_h)
-            if i == self.__n_layers - 1:
-                emb = self.__dropout_output(emb)
-            else:
-                emb = self.__dropout_intermediate(emb)
-
-        # (seq, batch, dim) -> (seq * batch, dim)
-        output = emb.view(emb.size(0) * emb.size(1), emb.size(2))
-        # (seq * batch, dim) -> (seq * batch, vocab)
-        output = self.__decoding_layer(output)
-        _, pred = torch.max(output, dim=-1)
-        prob = torch.nn.functional.softmax(output, dim=1)
-        # (seq * batch, vocab) -> (seq, batch, vocab)
-        output = output.view(emb.size(0), emb.size(1), self.__vocab_size)
-        prob = prob.view(emb.size(0), emb.size(1), self.__vocab_size)
-        # (seq * batch, vocab) -> (seq, batch,)
-        pred = pred.view(emb.size(0), emb.size(1))
-        return (output, prob, pred), new_hidden
-
-    def repackage_hidden(self, h):
-        """Wraps hidden states in new Tensors, to detach them from their history."""
-
-        if isinstance(h, torch.Tensor):
-            return h.detach()
-        else:
-            return tuple(self.repackage_hidden(v) for v in h)
-
-
-class LanguageModel:
-    """ LSTM bases language model """
-
-    def __init__(self,
+                 model_version: str = 'small',
                  checkpoint_dir: str = None,
                  **kwargs):
-        """ LSTM bases language model
-        * Allocate a GPU automatically; specify by CUDA_VISIBLE_DEVICES
-        * Load checkpoints if it exists
-        """
+        """ GPT2 language model """
         self.__logger = create_log()
-        self.__logger.debug('initialize network: \n*** LSTM based language model ***\n')
+        self.__logger.debug('initialize network: \n*** GPT2 ***\n')
         # setup parameter
         self.__param = ParameterManager(
             checkpoint_dir=checkpoint_dir,
-            default_parameter='./parameters/lm_lstm_ptb.toml',
+            default_parameter='./parameters/lm_gpt_%s_ptb.toml' % model_version,
             **kwargs)
         self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
         # build network
-        self.__net = Net(
-            dropout_word=self.__param("dropout_word"),
-            dropout_embedding=self.__param("dropout_embedding"),
-            dropout_intermediate=self.__param("dropout_intermediate"),
-            dropout_output=self.__param("dropout_output"),
+        self.__net = BaseGPT2(
+            n_layer=self.__param("n_layer"),
+            n_embedding=self.__param("n_embedding"),
+            n_state_ffn=self.__param("n_state_ffn"),
+            n_head=self.__param("n_head"),
+            n_context=self.__param("n_context"),
+            max_cache_size=self.__param("max_cache_size"),
+            residual_dropout=self.__param("residual_dropout"),
+            attention_dropout=self.__param("attention_dropout"),
+            embedding_dropout=self.__param("embedding_dropout"),
             vocab_size=self.__param("vocab_size"),
-            embedding_dim=self.__param("embedding_dim"),
-            n_layers=self.__param("n_layers"),
-            n_hidden_units=self.__param("n_hidden_units"),
-            sequence_length=self.__param("sequence_length"),
-            tie_weights=self.__param("tie_weights"),
-            init_range=self.__param("init_range")
         )
         # GPU allocation
         if torch.cuda.device_count() >= 1:
@@ -544,7 +454,7 @@ if __name__ == '__main__':
     with open('./data/penn-treebank/ptb.test.eos.id.txt', 'r') as f:
         _data_test = [int(i) for i in f.read().split()]
 
-    _model = LanguageModel(checkpoint_dir='./ckpt/lm_lstm_ptb')
+    _model = GPT2(checkpoint_dir='./ckpt/lm_lstm_ptb', model_version='small')
     _model.train(epoch=150,
                  data_train=_data_train,
                  data_valid=_data_valid,
