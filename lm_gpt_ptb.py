@@ -90,7 +90,7 @@ class GPT2:
                  **kwargs):
         """ GPT2 language model """
         self.__logger = create_log()
-        self.__logger.debug('initialize network: \n*** GPT2 ***\n')
+        self.__logger.debug('initialize network: *** GPT2 ***')
         # setup parameter
         self.__param = ParameterManager(
             checkpoint=checkpoint,

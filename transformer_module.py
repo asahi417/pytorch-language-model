@@ -396,9 +396,12 @@ class BaseGPT2(nn.Module):
         self.word_decoding.weight = self.word_embedding.weight
         if max_cache_size:
             assert max_cache_size >= 0
-            self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
         else:
-            self.position_embedding = nn.Embedding(n_context, n_embedding)
+            max_cache_size = 0
+        # position ids/embedding
+        self.position_ids = torch.arange(0, n_context + max_cache_size, dtype=torch.long)
+        self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
+
         self.embedding_dropout = nn.Dropout(embedding_dropout)
         self.transformer_decoder = TransformerDecoder(
             n_layer=n_layer,
@@ -412,17 +415,15 @@ class BaseGPT2(nn.Module):
         self.__initializer_range = initializer_range
         self.init_weight()
 
-    def __init_weight(self, module):
+    def __init_weight(self, _module):
         self.initializer_range = 0.02
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            # Slightly different from the TF version which uses truncated_normal for initialization
-            # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.__initializer_range)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
+        if isinstance(_module, (nn.Linear, nn.Embedding)):
+            _module.weight.data.normal_(mean=0.0, std=self.__initializer_range)
+            if isinstance(_module, nn.Linear) and _module.bias is not None:
+                _module.bias.data.zero_()
+        elif isinstance(_module, nn.LayerNorm):
+            _module.bias.data.zero_()
+            _module.weight.data.fill_(1.0)
 
     def init_weight(self):
         self.apply(self.__init_weight)
@@ -450,7 +451,7 @@ class BaseGPT2(nn.Module):
             start_position_id = 0
 
         # get embedding
-        position_ids = torch.arange(start_position_id, start_position_id + x.size(-1), dtype=torch.long)
+        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)]
         p_embedding = self.position_embedding(position_ids.unsqueeze(0))
         w_embedding = self.word_embedding(x)  # dropout embeddings
         embedding = self.embedding_dropout(p_embedding+w_embedding)

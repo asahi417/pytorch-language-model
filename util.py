@@ -39,6 +39,7 @@ def create_log():
     )
     dictConfig(logging_config)
     logger = logging.getLogger()
+    logging.getLogger('matplotlib').setLevel(logging.WARNING)
     return logger
 
 
