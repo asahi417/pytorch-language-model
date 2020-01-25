@@ -213,9 +213,6 @@ class ResNet:
         # optimizer
         self.__optimizer = optim.SGD(
             self.__net.parameters(), lr=self.__param('lr'), momentum=self.__param('momentum'))
-        # Decay LR by a factor of `gamma` every `step_size` epochs
-        self.__exp_lr_scheduler = optim.lr_scheduler.StepLR(
-            self.__optimizer, step_size=self.__param('step_size'), gamma=self.__param('gamma'))
         # loss definition (CrossEntropyLoss includes softmax inside)
         self.__loss = nn.CrossEntropyLoss()
         # load pre-trained ckpt
