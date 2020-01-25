@@ -98,6 +98,12 @@ class GPT2:
             default_parameter='./parameters/lm_gpt_%s_ptb.toml' % model_version,
             **kwargs)
         self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
+        # GPU allocation
+        if torch.cuda.device_count() >= 1:
+            self.__logger.debug('running on GPU')
+            self.if_use_gpu = True
+        else:
+            self.if_use_gpu = False
         # build network
         self.__net = BaseGPT2(
             n_layer=self.__param("n_layer"),
@@ -110,14 +116,10 @@ class GPT2:
             attention_dropout=self.__param("attention_dropout"),
             embedding_dropout=self.__param("embedding_dropout"),
             vocab_size=self.__param("vocab_size"),
+            cuda_device=self.if_use_gpu
         )
-        # GPU allocation
-        if torch.cuda.device_count() >= 1:
-            self.__logger.debug('running on GPU')
-            self.if_use_gpu = True
+        if self.if_use_gpu:
             self.__net = self.__net.cuda()
-        else:
-            self.if_use_gpu = False
         # optimizer
         self.__optimizer = AdamW(
             self.__net.parameters(),

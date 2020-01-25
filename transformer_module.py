@@ -364,7 +364,8 @@ class BaseGPT2(nn.Module):
                  attention_dropout: float,
                  embedding_dropout: float,
                  vocab_size: int,
-                 initializer_range: float=0.02):
+                 initializer_range: float=0.02,
+                 cuda_device: bool=True):
         """ GPT2: transformer-based Language Model
 
          Parameter
@@ -400,6 +401,8 @@ class BaseGPT2(nn.Module):
             max_cache_size = 0
         # position ids/embedding
         self.position_ids = torch.arange(0, n_context + max_cache_size, dtype=torch.long)
+        if cuda_device:  # constant will not be allocated on cuda
+            self.position_ids = self.position_ids.cuda()
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
 
         self.embedding_dropout = nn.Dropout(embedding_dropout)
