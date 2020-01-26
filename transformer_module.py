@@ -417,6 +417,10 @@ class BaseGPT2(nn.Module):
         self.position_ids = Variable(
             torch.arange(0, n_context + max_cache_size, dtype=torch.long),
             requires_grad=False)
+        self.position_ids_a = Variable(
+            torch.arange(0, n_context + max_cache_size, dtype=torch.long),
+            requires_grad=True)
+        self.position_ids_b = torch.arange(0, n_context + max_cache_size, dtype=torch.long)
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
 
         self.embedding_dropout = nn.Dropout(embedding_dropout)
