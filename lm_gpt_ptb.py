@@ -26,6 +26,8 @@ from transformer_module import BaseGPT2
 from util import create_log, ParameterManager
 from huggingface_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
 
 class BatchFeeder:
     """ Pytorch batch feeding iterator for language model training """
@@ -48,16 +50,14 @@ class BatchFeeder:
         self._index = 0
         self.batch_size = batch_size
         self.num_steps = num_steps
-        seq = torch.LongTensor(sequence)
+        seq = torch.tensor(sequence, dtype=torch.long, device=DEVICE)
         self.data_size = seq.size(0)
 
         n_batch = self.data_size // self.batch_size
         # Trim off any extra elements that wouldn't cleanly fit (remainders).
         seq = seq.narrow(0, 0, n_batch * self.batch_size)
         # Evenly divide the data across the bsz batches.
-        self._data = seq.view(self.batch_size, -1).t().contiguous()
-        if torch.cuda.device_count() >= 1:
-            self._data = self._data.cuda()
+        self._data = seq.view(self.batch_size, -1).contiguous()
 
     def __len__(self):
         return (self.data_size // self.batch_size - 1) // self.num_steps
@@ -72,11 +72,11 @@ class BatchFeeder:
         -----------------
         (inputs, outputs): list (batch_size, num_steps)
         """
-        if (self._index + 1) * self.num_steps + 1 > self._data.size(0):
+        if (self._index + 1) * self.num_steps + 1 > self._data.size(1):
             self._index = 0
             raise StopIteration
-        x = self._data[self._index * self.num_steps:(self._index + 1) * self.num_steps, :]
-        y = self._data[self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1, :]
+        x = self._data[:, self._index * self.num_steps:(self._index + 1) * self.num_steps]
+        y = self._data[:, self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1]
         self._index += 1
         return x, y
 

@@ -10,12 +10,10 @@ __all__ = [
     "SelfMaskedAttention",
     "TransformerBlock",
     "TransformerDecoder",
-    "BaseGPT2",
-    "IF_GPU"
+    "BaseGPT2"
 ]
 
 
-IF_GPU = torch.cuda.is_available()
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
