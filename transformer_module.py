@@ -3,7 +3,6 @@
 import math
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 
 __all__ = [
     "Conv1D",
@@ -15,7 +14,9 @@ __all__ = [
     "IF_GPU"
 ]
 
+
 IF_GPU = torch.cuda.is_available()
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
 class Conv1D(nn.Module):
@@ -133,11 +134,10 @@ class SelfMaskedAttention(nn.Module):
         self.linear_heads = Conv1D(self.__n_embedding, self.__n_embedding)  # 1d conv to get qkv once
         self.attention_dropout = nn.Dropout(attention_dropout)
         self.residual_dropout = nn.Dropout(residual_dropout)
-        self.mask = torch.FloatTensor(
-            [[int(r + max_cache_size <= c) for r in range(n_context + max_cache_size)] for c in range(n_context)])
-        if IF_GPU:
-            self.mask = self.mask.cuda()
-        print("mask", self.mask.device)
+        self.mask = torch.tensor(
+            [[int(r + max_cache_size <= c) for r in range(n_context + max_cache_size)] for c in range(n_context)],
+            device=DEVICE,
+            dtype=torch.float)
 
     def query_key_value(self, x, cached_key_value: list=None):
         """ get query/key/value vector for each head
@@ -420,13 +420,8 @@ class BaseGPT2(nn.Module):
         else:
             max_cache_size = 0
         # position ids/embedding
-        self.position_ids = torch.arange(0, n_context + max_cache_size, dtype=torch.long)
-        if IF_GPU:
-            self.position_ids = self.position_ids.cuda()
-
-        print("position", self.position_ids.device)
+        self.position_ids = torch.arange(0, n_context + max_cache_size, dtype=torch.long, device=DEVICE)
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
-
         self.embedding_dropout = nn.Dropout(embedding_dropout)
         self.transformer_decoder = TransformerDecoder(
             n_layer=n_layer,
@@ -479,9 +474,9 @@ class BaseGPT2(nn.Module):
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
         position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)]
-        # if w_embedding.device.type == 'cuda':
-        #     position_ids = position_ids.cuda()
         p_embedding = self.position_embedding(position_ids.unsqueeze(0))
+        print(p_embedding.shape)
+        print(w_embedding.shape)
         embedding = self.embedding_dropout(p_embedding + w_embedding)
 
         # transform
