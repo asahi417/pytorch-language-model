@@ -11,8 +11,11 @@ __all__ = [
     "SelfMaskedAttention",
     "TransformerBlock",
     "TransformerDecoder",
-    "BaseGPT2"
+    "BaseGPT2",
+    "IF_GPU"
 ]
+
+IF_GPU = torch.cuda.is_available()
 
 
 class Conv1D(nn.Module):
@@ -130,8 +133,11 @@ class SelfMaskedAttention(nn.Module):
         self.linear_heads = Conv1D(self.__n_embedding, self.__n_embedding)  # 1d conv to get qkv once
         self.attention_dropout = nn.Dropout(attention_dropout)
         self.residual_dropout = nn.Dropout(residual_dropout)
-        mask = [[int(r + max_cache_size <= c) for r in range(n_context + max_cache_size)] for c in range(n_context)]
-        self.mask = Variable(torch.FloatTensor(mask), requires_grad=False)
+        self.mask = torch.FloatTensor(
+            [[int(r + max_cache_size <= c) for r in range(n_context + max_cache_size)] for c in range(n_context)])
+        if IF_GPU:
+            self.mask = self.mask.cuda()
+        print("mask", self.mask.device)
 
     def query_key_value(self, x, cached_key_value: list=None):
         """ get query/key/value vector for each head
@@ -414,13 +420,11 @@ class BaseGPT2(nn.Module):
         else:
             max_cache_size = 0
         # position ids/embedding
-        self.position_ids = Variable(
-            torch.arange(0, n_context + max_cache_size, dtype=torch.long),
-            requires_grad=False)
-        self.position_ids_a = Variable(
-            torch.FloatTensor([i for i in range(10)]),
-            requires_grad=True)
-        self.position_ids_b = torch.arange(0, n_context + max_cache_size, dtype=torch.long)
+        self.position_ids = torch.arange(0, n_context + max_cache_size, dtype=torch.long)
+        if IF_GPU:
+            self.position_ids = self.position_ids.cuda()
+
+        print("position", self.position_ids.device)
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
 
         self.embedding_dropout = nn.Dropout(embedding_dropout)
