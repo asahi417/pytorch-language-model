@@ -418,7 +418,7 @@ class BaseGPT2(nn.Module):
             torch.arange(0, n_context + max_cache_size, dtype=torch.long),
             requires_grad=False)
         self.position_ids_a = Variable(
-            torch.arange(0, n_context + max_cache_size, dtype=torch.FloatTensor),
+            torch.FloatTensor([i for i in range(10)]),
             requires_grad=True)
         self.position_ids_b = torch.arange(0, n_context + max_cache_size, dtype=torch.long)
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
