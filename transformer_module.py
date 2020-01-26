@@ -163,7 +163,6 @@ class SelfMaskedAttention(nn.Module):
             assert list(v.permute(0, 1, 3, 2).size())[:-1] == list(cached_v.permute(0, 1, 3, 2).size())[:-1]
             v = torch.cat([cached_v, v], dim=2)
             k = torch.cat([cached_k, k], dim=3)
-            # print(v.shape)
         return q, k, v
 
     def mask_attention_weight(self, att_weight):
@@ -191,6 +190,8 @@ class SelfMaskedAttention(nn.Module):
         assert n_head == self.__n_head
         mask = [[int(r + cache_size <= c) for r in range(seq_attending)] for c in range(seq_attended)]
         mask = torch.FloatTensor(mask)
+        if att_weight.device.type == 'cuda':
+            mask = mask.cuda()
         att_weight = mask * att_weight
         return att_weight
 
@@ -364,8 +365,7 @@ class BaseGPT2(nn.Module):
                  attention_dropout: float,
                  embedding_dropout: float,
                  vocab_size: int,
-                 initializer_range: float=0.02,
-                 cuda_device: bool=True):
+                 initializer_range: float=0.02):
         """ GPT2: transformer-based Language Model
 
          Parameter
@@ -401,8 +401,6 @@ class BaseGPT2(nn.Module):
             max_cache_size = 0
         # position ids/embedding
         self.position_ids = torch.arange(0, n_context + max_cache_size, dtype=torch.long)
-        if cuda_device:  # constant will not be allocated on cuda
-            self.position_ids = self.position_ids.cuda()
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
 
         self.embedding_dropout = nn.Dropout(embedding_dropout)
@@ -454,10 +452,12 @@ class BaseGPT2(nn.Module):
             start_position_id = 0
 
         # get embedding
-        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)]
-        p_embedding = self.position_embedding(position_ids.unsqueeze(0))
         w_embedding = self.word_embedding(x)  # dropout embeddings
-        embedding = self.embedding_dropout(p_embedding+w_embedding)
+        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)]
+        if w_embedding.device.type == 'cuda':
+            position_ids = position_ids.cuda()
+        p_embedding = self.position_embedding(position_ids.unsqueeze(0))
+        embedding = self.embedding_dropout(p_embedding + w_embedding)
 
         # transform
         logit, cached_key_value = self.transformer_decoder(embedding, cached_key_value)

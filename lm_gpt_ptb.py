@@ -19,6 +19,7 @@ import torch.nn as nn
 import numpy as np
 import os
 import argparse
+import random
 from torch.utils.tensorboard import SummaryWriter
 
 from transformer_module import BaseGPT2
@@ -85,8 +86,8 @@ class GPT2:
 
     def __init__(self,
                  checkpoint: str = None,
-                 model_version: str = 'small',
                  checkpoint_dir: str = None,
+                 seed: int = 1234,
                  **kwargs):
         """ GPT2 language model """
         self.__logger = create_log()
@@ -95,15 +96,9 @@ class GPT2:
         self.__param = ParameterManager(
             checkpoint=checkpoint,
             checkpoint_dir=checkpoint_dir,
-            default_parameter='./parameters/lm_gpt_%s_ptb.toml' % model_version,
+            default_parameter='./parameters/lm_gpt_ptb.toml',
             **kwargs)
         self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
-        # GPU allocation
-        if torch.cuda.device_count() >= 1:
-            self.__logger.debug('running on GPU')
-            self.if_use_gpu = True
-        else:
-            self.if_use_gpu = False
         # build network
         self.__net = BaseGPT2(
             n_layer=self.__param("n_layer"),
@@ -115,11 +110,21 @@ class GPT2:
             residual_dropout=self.__param("residual_dropout"),
             attention_dropout=self.__param("attention_dropout"),
             embedding_dropout=self.__param("embedding_dropout"),
-            vocab_size=self.__param("vocab_size"),
-            cuda_device=self.if_use_gpu
+            vocab_size=self.__param("vocab_size")
         )
-        if self.if_use_gpu:
+        # GPU allocation
+        if torch.cuda.device_count() == 1:
+            self.__logger.debug('running on single GPU')
             self.__net = self.__net.cuda()
+            self.n_gpu = 1
+        elif torch.cuda.device_count() > 1:
+            self.__logger.debug('running on %i GPUs' % torch.cuda.device_count())
+            self.__net = torch.nn.DataParallel(self.__net.cuda())
+            self.n_gpu = torch.cuda.device_count()
+        else:
+            self.__logger.debug('no GPUs found')
+            self.n_gpu = 0
+
         # optimizer
         self.__optimizer = AdamW(
             self.__net.parameters(),
@@ -157,13 +162,13 @@ class GPT2:
 
         # log
         self.__writer = SummaryWriter(log_dir=self.__param.checkpoint_dir)
-        self.__sanity_check()
+        self.__sanity_check(seed)
 
     @property
     def hyperparameters(self):
         return self.__param
 
-    def __sanity_check(self):
+    def __sanity_check(self, seed: int = 1234):
         """ sanity check as logging model size """
         self.__logger.debug('trainable variables')
         model_size = 0
@@ -176,6 +181,14 @@ class GPT2:
         self.__logger.debug('hyperparameters')
         for k, v in self.__param.parameter.items():
             self.__logger.debug(' - [param] %s: %s' % (k, str(v)))
+
+        # fix random seed
+        if seed:
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            if self.n_gpu > 0:
+                torch.cuda.manual_seed_all(seed)
 
     def train(self,
               data_train: list,
@@ -249,6 +262,7 @@ class GPT2:
             logit = logit.view(-1, logit.size(-1))
             outputs = outputs.view(-1)
             tmp_loss = self.__loss(logit, outputs)
+            print(len(tmp_loss))
             tmp_loss.backward()
             # optimize
             self.__optimizer.step()
@@ -309,7 +323,10 @@ if __name__ == '__main__':
     arguments = get_options()
     assert arguments.model in ['small', 'mid', 'large', 'xlarge']
 
-    _model = GPT2(checkpoint=arguments.ckpt, checkpoint_dir='./ckpt/lm_gpt_ptb', model_version=arguments.model)
+    _model = GPT2(checkpoint=arguments.ckpt,
+                  checkpoint_dir='./ckpt/lm_gpt_ptb')
+    # ,
+    #           model_version=arguments.model)
     _model.train(data_train=_data_train,
                  data_valid=_data_valid,
                  data_test=_data_test,
