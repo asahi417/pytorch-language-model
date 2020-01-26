@@ -116,9 +116,9 @@ class GPT2:
         if torch.cuda.device_count() == 1:
             self.__logger.debug('running on single GPU')
             self.__net = self.__net.cuda()
-            print(self.__net.position_id.device)
-            print(self.__net.position_id_a.device)
-            print(self.__net.position_id_b.device)
+            print(self.__net.position_ids.device)
+            print(self.__net.position_ids_a.device)
+            print(self.__net.position_ids_b.device)
             exit()
             self.n_gpu = 1
         elif torch.cuda.device_count() > 1:
