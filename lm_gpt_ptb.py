@@ -74,8 +74,8 @@ class BatchFeeder:
         if (self._index + 1) * self.num_steps + 1 > self._data.size(1):
             self._index = 0
             raise StopIteration
-        x = self._data[:, self._index * self.num_steps:(self._index + 1) * self.num_steps]
-        y = self._data[:, self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1]
+        x = self._data[:, self._index * self.num_steps:(self._index + 1) * self.num_steps].contiguous()
+        y = self._data[:, self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1].contiguous()
         self._index += 1
         return x, y
 
