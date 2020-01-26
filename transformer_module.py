@@ -3,6 +3,7 @@
 import math
 import torch
 import torch.nn as nn
+from torch.autograd import Variable
 
 __all__ = [
     "Conv1D",
@@ -105,7 +106,9 @@ class SelfMaskedAttention(nn.Module):
                  n_embedding: int,
                  n_head: int,
                  attention_dropout: float,
-                 residual_dropout: float):
+                 residual_dropout: float,
+                 n_context: int,
+                 max_cache_size: int=0):
         """ masked multi-heads self (causal) attention module with caching
 
          Parameter
@@ -121,10 +124,14 @@ class SelfMaskedAttention(nn.Module):
         assert n_embedding % n_head == 0
         self.__n_embedding = n_embedding
         self.__n_head = n_head
+        self.__n_context = n_context
+        self.__max_cache_size = max_cache_size
         self.linear_qkv = Conv1D(self.__n_embedding, self.__n_embedding * 3)  # 1d conv to get qkv once
         self.linear_heads = Conv1D(self.__n_embedding, self.__n_embedding)  # 1d conv to get qkv once
         self.attention_dropout = nn.Dropout(attention_dropout)
         self.residual_dropout = nn.Dropout(residual_dropout)
+        mask = [[int(r + max_cache_size <= c) for r in range(n_context + max_cache_size)] for c in range(n_context)]
+        self.mask = Variable(torch.FloatTensor(mask), requires_grad=False)
 
     def query_key_value(self, x, cached_key_value: list=None):
         """ get query/key/value vector for each head
@@ -184,15 +191,16 @@ class SelfMaskedAttention(nn.Module):
         att_weight: tensor (batch, head, seq, seq)
         """
         batch, n_head, seq_attended, seq_attending = att_weight.size()
-        # print(att_weight.shape)
-        cache_size = seq_attending - seq_attended
-        assert cache_size >= 0
+        # cache_size = seq_attending - seq_attended
+        assert seq_attending >= seq_attended
         assert n_head == self.__n_head
-        mask = [[int(r + cache_size <= c) for r in range(seq_attending)] for c in range(seq_attended)]
-        mask = torch.FloatTensor(mask)
-        if att_weight.device.type == 'cuda':
-            mask = mask.cuda()
-        att_weight = mask * att_weight
+        assert self.__n_context >= seq_attended
+        assert self.__n_context + self.__max_cache_size >= seq_attending
+        # mask = [[int(r + cache_size <= c) for r in range(seq_attending)] for c in range(seq_attended)]
+        # mask = torch.FloatTensor(mask)
+        # if att_weight.device.type == 'cuda':
+        #     mask = mask.cuda()
+        att_weight = self.mask[:seq_attended, :seq_attending] * att_weight
         return att_weight
 
     def forward(self, x, cached_key_value: list=None):
@@ -236,7 +244,9 @@ class TransformerBlock(nn.Module):
                  n_state_ffn: int,
                  n_head: int,
                  residual_dropout: float,
-                 attention_dropout: float):
+                 attention_dropout: float,
+                 n_context: int,
+                 max_cache_size: int = 0):
         """ single Transformer Decoder Block
 
          Parameter
@@ -254,7 +264,8 @@ class TransformerBlock(nn.Module):
         self.layer_norm_1 = nn.LayerNorm(n_embedding)  # eps=1e-5
         self.layer_norm_2 = nn.LayerNorm(n_embedding)  # eps=1e-5
         self.pointwise_ff = PointwiseFeedForward(n_embedding, n_state_ffn)
-        self.self_attention = SelfMaskedAttention(n_embedding, n_head, attention_dropout, residual_dropout)
+        self.self_attention = SelfMaskedAttention(
+            n_embedding, n_head, attention_dropout, residual_dropout, n_context, max_cache_size)
 
     def forward(self, x, cached_key_value: list=None):
         """ single transformer block
@@ -286,7 +297,8 @@ class TransformerDecoder(nn.Module):
                  n_head: int,
                  residual_dropout: float,
                  attention_dropout: float,
-                 max_cache_size: int=None):
+                 n_context: int,
+                 max_cache_size: int=0):
         """ Transformer Decoder
 
          Parameter
@@ -312,7 +324,9 @@ class TransformerDecoder(nn.Module):
                              n_state_ffn=n_state_ffn,
                              n_head=n_head,
                              residual_dropout=residual_dropout,
-                             attention_dropout=attention_dropout)
+                             attention_dropout=attention_dropout,
+                             n_context=n_context,
+                             max_cache_size=max_cache_size)
             for _ in range(self.__n_layer)
         ])
         self.layer_norm = nn.LayerNorm(n_embedding)  # eps=1e-5
@@ -400,7 +414,9 @@ class BaseGPT2(nn.Module):
         else:
             max_cache_size = 0
         # position ids/embedding
-        self.position_ids = torch.arange(0, n_context + max_cache_size, dtype=torch.long)
+        self.position_ids = Variable(
+            torch.arange(0, n_context + max_cache_size, dtype=torch.long),
+            requires_grad=False)
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
 
         self.embedding_dropout = nn.Dropout(embedding_dropout)
@@ -411,6 +427,7 @@ class BaseGPT2(nn.Module):
             n_head=n_head,
             residual_dropout=residual_dropout,
             attention_dropout=attention_dropout,
+            n_context=n_context,
             max_cache_size=max_cache_size
         )
         self.__initializer_range = initializer_range
@@ -454,8 +471,8 @@ class BaseGPT2(nn.Module):
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
         position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)]
-        if w_embedding.device.type == 'cuda':
-            position_ids = position_ids.cuda()
+        # if w_embedding.device.type == 'cuda':
+        #     position_ids = position_ids.cuda()
         p_embedding = self.position_embedding(position_ids.unsqueeze(0))
         embedding = self.embedding_dropout(p_embedding + w_embedding)
 
