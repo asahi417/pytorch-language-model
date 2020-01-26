@@ -473,8 +473,6 @@ class BaseGPT2(nn.Module):
         w_embedding = self.word_embedding(x)  # dropout embeddings
         position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)]
         p_embedding = self.position_embedding(position_ids.unsqueeze(0))
-        print(p_embedding.shape)
-        print(w_embedding.shape)
         embedding = self.embedding_dropout(p_embedding + w_embedding)
 
         # transform

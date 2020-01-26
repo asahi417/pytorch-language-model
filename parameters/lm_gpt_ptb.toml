@@ -10,7 +10,7 @@ embedding_dropout = 0.1
 vocab_size = 15432
 initializer_range = 0.02
 
-batch_size = 256
+batch_size = 64
 
 lr = 2.5e-4
 weight_decay = 0.01

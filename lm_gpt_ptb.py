@@ -26,8 +26,6 @@ from transformer_module import BaseGPT2
 from util import create_log, ParameterManager
 from huggingface_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
 
 class BatchFeeder:
     """ Pytorch batch feeding iterator for language model training """
@@ -50,7 +48,8 @@ class BatchFeeder:
         self._index = 0
         self.batch_size = batch_size
         self.num_steps = num_steps
-        seq = torch.tensor(sequence, dtype=torch.long, device=DEVICE)
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        seq = torch.tensor(sequence, dtype=torch.long, device=device)
         self.data_size = seq.size(0)
 
         n_batch = self.data_size // self.batch_size
@@ -325,8 +324,6 @@ if __name__ == '__main__':
 
     _model = GPT2(checkpoint=arguments.ckpt,
                   checkpoint_dir='./ckpt/lm_gpt_ptb')
-    # ,
-    #           model_version=arguments.model)
     _model.train(data_train=_data_train,
                  data_valid=_data_valid,
                  data_test=_data_test,
