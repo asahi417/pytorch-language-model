@@ -206,7 +206,7 @@ class SelfMaskedAttention(nn.Module):
         # mask = torch.FloatTensor(mask)
         # if att_weight.device.type == 'cuda':
         #     mask = mask.cuda()
-        att_weight = self.mask[:seq_attended, :seq_attending].clone() * att_weight
+        att_weight = self.mask[:seq_attended, :seq_attending].clone().detach() * att_weight
         return att_weight
 
     def forward(self, x, cached_key_value: list=None):
@@ -474,7 +474,7 @@ class BaseGPT2(nn.Module):
 
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
-        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].clone()
+        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].clone().detach()
         p_embedding = self.position_embedding(position_ids.unsqueeze(0))
         embedding = self.embedding_dropout(p_embedding + w_embedding)
 
