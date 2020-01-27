@@ -278,9 +278,8 @@ class TransformerBlock(nn.Module):
                 `value` tensor (batch, head, seq + cache_size, dim/head)
         """
         c, (k, v) = self.self_attention(self.layer_norm_1(x), cached_key_value=cached_key_value)
-        x += c
-        x += self.pointwise_ff(self.layer_norm_2(x))
-        return x, (k, v)
+        output = x + self.pointwise_ff(self.layer_norm_2(x + c))
+        return output, (k, v)
 
 
 class TransformerDecoder(nn.Module):
