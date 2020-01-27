@@ -411,7 +411,7 @@ class BaseGPT2(nn.Module):
             max_cache_size = 0
         # position ids/embedding
         self.register_buffer(
-            'position_ids', torch.arange(0, n_context + max_cache_size, dtype=torch.long))
+            'position_ids', torch.arange(0, n_context + max_cache_size, dtype=torch.long, requires_grad=False))
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
         self.embedding_dropout = nn.Dropout(embedding_dropout)
         self.transformer_decoder = TransformerDecoder(
