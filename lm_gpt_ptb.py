@@ -321,6 +321,7 @@ if __name__ == '__main__':
 
     arguments = get_options()
     assert arguments.model in ['small', 'mid', 'large', 'xlarge']
+    torch.autograd.set_detect_anomaly(True)
 
     _model = GPT2(checkpoint=arguments.ckpt,
                   checkpoint_dir='./ckpt/lm_gpt_ptb')
