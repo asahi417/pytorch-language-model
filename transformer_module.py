@@ -196,7 +196,7 @@ class SelfMaskedAttention(nn.Module):
         assert n_head == self.__n_head
         assert self.__n_context >= seq_attended
         assert self.__n_context + self.__max_cache_size >= seq_attending
-        att_weight = self.mask[:seq_attended, :seq_attending].clone().detach() * att_weight
+        att_weight = self.mask[:seq_attended, :seq_attending] * att_weight
         return att_weight
 
     def forward(self, x, cached_key_value: list=None):
@@ -214,7 +214,6 @@ class SelfMaskedAttention(nn.Module):
                 `value` tensor (batch, head, seq + cache_size, dim/head)
         """
         q, k, v = self.query_key_value(x, cached_key_value)
-        # print(v.shape)
         # attention mask: batch, head, seq, seq + cache
         att_weight = torch.matmul(q, k)
         att_weight = self.mask_attention_weight(att_weight)
@@ -352,7 +351,6 @@ class TransformerDecoder(nn.Module):
                 cache_length = min(k.size(-1), self.__max_cache_size)
                 k = k[:, :, :,  -cache_length:].detach()
                 v = v[:, :, -cache_length:, :].detach()
-                # print(k.shape, v.shape, x.shape)
 
             cached_key_value_new.append((k, v))
 
@@ -410,7 +408,7 @@ class BaseGPT2(nn.Module):
             max_cache_size = 0
         # position ids/embedding
         self.register_buffer(
-            'position_ids', torch.arange(0, n_context + max_cache_size, dtype=torch.long, requires_grad=False))
+            'position_ids', torch.arange(0, n_context + max_cache_size, dtype=torch.long))
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
         self.embedding_dropout = nn.Dropout(embedding_dropout)
         self.transformer_decoder = TransformerDecoder(
@@ -463,10 +461,9 @@ class BaseGPT2(nn.Module):
 
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
-        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].unsqueeze(0).clone().detach()
+        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].unsqueeze(0)
         p_embedding = self.position_embedding(position_ids)
         embedding = self.embedding_dropout(p_embedding + w_embedding)
-        print(w_embedding.shape, position_ids.shape, p_embedding.shape, embedding.shape)
 
         # transform
         logit, cached_key_value = self.transformer_decoder(embedding, cached_key_value)

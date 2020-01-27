@@ -261,7 +261,6 @@ class GPT2:
             logit = logit.view(-1, logit.size(-1))
             outputs = outputs.view(-1)
             tmp_loss = self.__loss(logit, outputs)
-            print(tmp_loss)
             tmp_loss.backward()
             # optimize
             self.__optimizer.step()
