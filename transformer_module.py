@@ -278,7 +278,9 @@ class TransformerBlock(nn.Module):
                 `value` tensor (batch, head, seq + cache_size, dim/head)
         """
         c, (k, v) = self.self_attention(self.layer_norm_1(x), cached_key_value=cached_key_value)
+        print(x.shape)
         x += c
+        print(x.shape)
         x += self.pointwise_ff(self.layer_norm_2(x))
         return x, (k, v)
 
@@ -467,6 +469,7 @@ class BaseGPT2(nn.Module):
         position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].clone().detach()
         p_embedding = self.position_embedding(position_ids.unsqueeze(0))
         embedding = self.embedding_dropout(p_embedding + w_embedding)
+        print(w_embedding.shape, position_ids.shape, p_embedding.shape, embedding.shape)
 
         # transform
         logit, cached_key_value = self.transformer_decoder(embedding, cached_key_value)
