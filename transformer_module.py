@@ -14,9 +14,6 @@ __all__ = [
 ]
 
 
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-
 class Conv1D(nn.Module):
     """ 1d convolution """
 
@@ -132,12 +129,10 @@ class SelfMaskedAttention(nn.Module):
         self.linear_heads = Conv1D(self.__n_embedding, self.__n_embedding)  # 1d conv to get qkv once
         self.attention_dropout = nn.Dropout(attention_dropout)
         self.residual_dropout = nn.Dropout(residual_dropout)
-        self.mask = torch.tensor(
-            [[int(r + max_cache_size <= c) for r in range(n_context + max_cache_size)] for c in range(n_context)],
-            device=DEVICE,
-            dtype=torch.float,
-            requires_grad=False
-        )
+        self.register_buffer(
+            'mask', torch.tensor(
+                [[int(r + max_cache_size <= c) for r in range(n_context + max_cache_size)] for c in range(n_context)],
+                dtype=torch.float))
 
     def query_key_value(self, x, cached_key_value: list=None):
         """ get query/key/value vector for each head
@@ -197,15 +192,10 @@ class SelfMaskedAttention(nn.Module):
         att_weight: tensor (batch, head, seq, seq)
         """
         batch, n_head, seq_attended, seq_attending = att_weight.size()
-        # cache_size = seq_attending - seq_attended
         assert seq_attending >= seq_attended
         assert n_head == self.__n_head
         assert self.__n_context >= seq_attended
         assert self.__n_context + self.__max_cache_size >= seq_attending
-        # mask = [[int(r + cache_size <= c) for r in range(seq_attending)] for c in range(seq_attended)]
-        # mask = torch.FloatTensor(mask)
-        # if att_weight.device.type == 'cuda':
-        #     mask = mask.cuda()
         att_weight = self.mask[:seq_attended, :seq_attending].clone().detach() * att_weight
         return att_weight
 
@@ -420,8 +410,8 @@ class BaseGPT2(nn.Module):
         else:
             max_cache_size = 0
         # position ids/embedding
-        self.position_ids = torch.arange(
-            0, n_context + max_cache_size, dtype=torch.long, device=DEVICE, requires_grad=False)
+        self.register_buffer(
+            'position_ids', torch.arange(0, n_context + max_cache_size, dtype=torch.long))
         self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
         self.embedding_dropout = nn.Dropout(embedding_dropout)
         self.transformer_decoder = TransformerDecoder(
