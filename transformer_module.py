@@ -208,7 +208,7 @@ class SelfMaskedAttention(nn.Module):
     @staticmethod
     def masked_softmax(vec, mask, dim=1, epsilon=1e-5):
         """ softmax ignoring zero value """
-        exps = torch.exp(vec)
+        exps = torch.exp(vec.float())
         masked_exps = exps * mask.float()
         masked_sums = masked_exps.sum(dim, keepdim=True) + epsilon
         return masked_exps / masked_sums
@@ -482,7 +482,7 @@ class BaseGPT2(nn.Module):
         # get output
         batch, seq, dim = logit.size()
         logit = logit.view(batch * seq, dim)  # (batch, seq, dim) -> (batch * seq, dim)
-        output = self.word_decoding(logit)  # (batch * seq, dim) -> (batch * seq, vocab)
+        output = self.word_decoding(logit).float()  # (batch * seq, dim) -> (batch * seq, vocab)
 
         # get pred/prob
         pred = torch.max(output, dim=1)[1].view(batch, seq)

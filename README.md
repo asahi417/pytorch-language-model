@@ -27,11 +27,7 @@ Hyperparameter can be changed by editing [toml file](./parameters/lm_lstm_ptb.to
 
 ***Mixed precision training***
 
-```
-git clone https://github.com/NVIDIA/apex
-cd apex
-pip3.6 install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
-```
+WIP
 
 
 ### [LSTM Language Model on SentencePieceTokenizer](./lm_lstm_ptb.py)  

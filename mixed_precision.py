@@ -23,34 +23,13 @@ class tofp16(nn.Module):
         return x.half()
 
 
-def copy_in_params(net, params):
-    net_params = list(net.parameters())
-    for i in range(len(params)):
-        net_params[i].data.copy_(params[i].data)
-
-
-def set_grad(params, params_with_grad):
-
-    for param, param_w_grad in zip(params, params_with_grad):
-        if param.grad is None:
-            param.grad = torch.nn.Parameter(param.data.new().resize_(*param.data.size()))
-        param.grad.data.copy_(param_w_grad.grad.data)
-
-
-def BN_convert_float(module):
-    '''
-    BatchNorm layers to have parameters in single precision.
-    Find all layers and convert them back to float. This can't
-    be done with built in .apply as that function will apply
-    fn to all modules, parameters, and buffers. Thus we wouldn't
-    be able to guard the float conversion based on the module type.
-    '''
-    if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-        module.float()
-    for child in module.children():
-        BN_convert_float(child)
-    return module
+def revert_float32(network_module):
+    if isinstance(network_module, torch.nn.LayerNorm):
+        network_module = network_module.float()
+    for child in network_module.children():
+        revert_float32(child)
+    return network_module
 
 
 def network_to_half(network):
-    return nn.Sequential(tofp16(), BN_convert_float(network.half()))
+    return nn.Sequential(tofp16(), revert_float32(network.half()))
