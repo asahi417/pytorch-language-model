@@ -19,3 +19,4 @@ scheduler = 'linear'
 warmup_steps = 2000
 total_steps = 25000
 
+random_seed = 1234

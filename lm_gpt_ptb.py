@@ -1,16 +1,4 @@
-""" pytorch GPT implementation, train on PTB
-
-reference
-- official codebase (tf) https://github.com/openai/gpt-2
-- huggingface (torch) https://github.com/huggingface/transformers/blob/master/src/transformers/modeling_gpt2.py#L329
-- fairseq (torch)
-    model https://github.com/pytorch/fairseq/blob/master/fairseq/models/transformer_lm.py
-    transformer https://github.com/pytorch/fairseq/blob/master/fairseq/models/transformer.py
-
-Optimizer!!!
-https://github.com/huggingface/transformers/blob/master/examples/run_lm_finetuning.py
-https://github.com/huggingface/transformers/blob/90b7df444fc30d5f476e5ab32d1f89340998a28d/src/transformers/optimization.py#L96
-"""
+""" pytorch GPT implementation, train on PTB """
 
 # for model
 import copy
@@ -86,7 +74,7 @@ class GPT2:
     def __init__(self,
                  checkpoint: str = None,
                  checkpoint_dir: str = None,
-                 seed: int = 1234,
+                 default_parameter: str = None,
                  **kwargs):
         """ GPT2 language model """
         self.__logger = create_log()
@@ -95,7 +83,7 @@ class GPT2:
         self.__param = ParameterManager(
             checkpoint=checkpoint,
             checkpoint_dir=checkpoint_dir,
-            default_parameter='./parameters/lm_gpt_ptb.toml',
+            default_parameter=default_parameter,
             **kwargs)
         self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
         # build network
@@ -153,6 +141,8 @@ class GPT2:
             self.__best_epoch = ckpt['best_epoch']
             self.__best_val_ppl = ckpt['best_val_ppl']
             self.__logger.debug('load ckpt from %s' % self.__checkpoint_model)
+            self.__logger.debug(' - epoch (best): %s (%s) ' % (str(ckpt['epoch']), str(ckpt['best_epoch'])))
+            self.__logger.debug(' - ppl (best)  : %s (%s) ' % (str(ckpt['val_ppl']), str(ckpt['best_val_ppl'])))
         else:
             self.__training_step = 0
             self.__epoch = 0
@@ -161,7 +151,7 @@ class GPT2:
 
         # log
         self.__writer = SummaryWriter(log_dir=self.__param.checkpoint_dir)
-        self.__sanity_check(seed)
+        self.__sanity_check(self.__param('random_seed'))
 
     @property
     def hyperparameters(self):
@@ -188,6 +178,15 @@ class GPT2:
             torch.manual_seed(seed)
             if self.n_gpu > 0:
                 torch.cuda.manual_seed_all(seed)
+
+    def evaluate(self, data_valid, data_test=None):
+        """ evaluate model """
+        batch_param = dict(batch_size=self.__param('batch_size'), num_steps=self.__param('n_context'))
+        loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_valid, **batch_param))
+        self.__logger.debug('(val)  loss: %.5f, ppl: %.5f' % (loss, ppl))
+        if data_test:
+            loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_test, **batch_param), is_test=True)
+            self.__logger.debug('(test) loss: %.5f, ppl: %.5f' % (loss, ppl))
 
     def train(self,
               data_train: list,
@@ -305,8 +304,8 @@ class GPT2:
 def get_options():
     parser = argparse.ArgumentParser(description='Train tokenizer', formatter_class=argparse.RawTextHelpFormatter)
     _p = {'nargs': '?', 'action': 'store', 'const': None, 'choices': None, 'metavar': None}
-    parser.add_argument('-m', '--model', help='model size', default='small', type=str, **_p)
     parser.add_argument('-c', '--ckpt', help='pre-trained model ckpt', default=None, type=str, **_p)
+    parser.add_argument('-e', '--evaluate', help='evaluation', action='store_true')
     return parser.parse_args()
 
 
@@ -319,13 +318,15 @@ if __name__ == '__main__':
         _data_test = [int(i) for i in f.read().split()]
 
     arguments = get_options()
-    assert arguments.model in ['small', 'mid', 'large', 'xlarge']
-    torch.autograd.set_detect_anomaly(True)
 
     _model = GPT2(checkpoint=arguments.ckpt,
-                  checkpoint_dir='./ckpt/lm_gpt_ptb')
-    _model.train(data_train=_data_train,
-                 data_valid=_data_valid,
-                 data_test=_data_test,
-                 progress_interval=20)
+                  checkpoint_dir='./ckpt/lm_gpt_ptb',
+                  default_parameter='./parameters/lm_gpt_ptb.toml')
+    if arguments.evaluate:
+        _model.evaluate(data_valid=_data_valid, data_test=_data_test)
+    else:
+        _model.train(data_train=_data_train,
+                     data_valid=_data_valid,
+                     data_test=_data_test,
+                     progress_interval=20)
 
