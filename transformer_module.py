@@ -173,7 +173,7 @@ class SelfMaskedAttention(nn.Module):
             k = torch.cat([cached_k, k], dim=3)
         return q, k, v
 
-    def masked_attention_weight(self, q, v, k):
+    def masked_attention_weight(self, q, k, v):
         """ causal mask attention weight by lower triangular mask
 
         [[1., 0., 0., 0., 0.],
@@ -185,8 +185,8 @@ class SelfMaskedAttention(nn.Module):
          Parameter
         -----------
         q: tensor (batch, self.__n_head, seq, dim / self.__n_head)
-        v: tensor (batch, self.__n_head, seq + cached_seq, dim / self.__n_head)
         k: tensor (batch, self.__n_head, dim / self.__n_head, seq + cached_seq)
+        v: tensor (batch, self.__n_head, seq + cached_seq, dim / self.__n_head)
 
          Return
         -----------
