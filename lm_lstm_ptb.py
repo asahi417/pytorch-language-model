@@ -28,6 +28,7 @@ from glob import glob
 # for logger
 import logging
 from logging.config import dictConfig
+import argparse
 
 
 def create_log():
@@ -620,6 +621,14 @@ class LanguageModel:
         mean_loss = full_loss / full_seq_length
         perplexity = np.exp(min(30, full_loss / full_seq_length))
         return mean_loss, perplexity
+
+
+def get_options():
+    parser = argparse.ArgumentParser(description='Train tokenizer', formatter_class=argparse.RawTextHelpFormatter)
+    _p = {'nargs': '?', 'action': 'store', 'const': None, 'choices': None, 'metavar': None}
+    parser.add_argument('-c', '--ckpt', help='pre-trained model ckpt', default=None, type=str, **_p)
+    parser.add_argument('-e', '--evaluate', help='evaluation', action='store_true')
+    return parser.parse_args()
 
 
 if __name__ == '__main__':

@@ -476,6 +476,7 @@ class BaseGPT2(nn.Module):
         # get pred/prob
         pred = torch.max(output, dim=1)[1].view(batch, seq)
         prob = torch.nn.functional.softmax(output, dim=1).view(batch, seq, output.size(1))
+        output = output.view(batch, seq, output.size(1))
         return (output, prob, pred), cached_key_value
 
 
