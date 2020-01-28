@@ -290,6 +290,7 @@ class GPT2:
             inputs, outputs = data
             print()
             print(inputs.shape)
+            print(inputs[0, :5], outputs[0, :5])
             (logit, prob, pred), _ = self.__net(inputs)
             print(logit.shape, prob.shape, pred.shape)
             logit = logit.view(-1, logit.size(-1))
