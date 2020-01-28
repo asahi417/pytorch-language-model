@@ -173,7 +173,7 @@ class SelfMaskedAttention(nn.Module):
             k = torch.cat([cached_k, k], dim=3)
         return q, k, v
 
-    def mask_attention_weight(self, att_weight):
+    def masked_attention_weight(self, q, v, k):
         """ causal mask attention weight by lower triangular mask
 
         [[1., 0., 0., 0., 0.],
@@ -184,20 +184,34 @@ class SelfMaskedAttention(nn.Module):
 
          Parameter
         -----------
-        att_weight: tensor (batch, head, seq, seq + cache)
-            3rd axis is attended, and 4th is attending
+        q: tensor (batch, self.__n_head, seq, dim / self.__n_head)
+        v: tensor (batch, self.__n_head, seq + cached_seq, dim / self.__n_head)
+        k: tensor (batch, self.__n_head, dim / self.__n_head, seq + cached_seq)
 
          Return
         -----------
-        att_weight: tensor (batch, head, seq, seq)
+        att_weight: tensor (batch, head, seq, seq + cache)
+            3rd axis is attended, and 4th is attending
         """
+        att_weight = torch.matmul(q, k)
+
         batch, n_head, seq_attended, seq_attending = att_weight.size()
         assert seq_attending >= seq_attended
         assert n_head == self.__n_head
         assert self.__n_context >= seq_attended
         assert self.__n_context + self.__max_cache_size >= seq_attending
-        att_weight = self.mask[:seq_attended, :seq_attending] * att_weight
+        mask = self.mask[:seq_attended, :seq_attending]
+        att_weight = self.masked_softmax(att_weight / math.sqrt(v.size(-1)), mask, dim=-1)
+        att_weight = self.attention_dropout(att_weight)
         return att_weight
+
+    @staticmethod
+    def masked_softmax(vec, mask, dim=1, epsilon=1e-5):
+        """ softmax ignoring zero value """
+        exps = torch.exp(vec)
+        masked_exps = exps * mask.float()
+        masked_sums = masked_exps.sum(dim, keepdim=True) + epsilon
+        return masked_exps / masked_sums
 
     def forward(self, x, cached_key_value: list=None):
         """ get attended context vector
@@ -215,10 +229,7 @@ class SelfMaskedAttention(nn.Module):
         """
         q, k, v = self.query_key_value(x, cached_key_value)
         # attention mask: batch, head, seq, seq + cache
-        att_weight = torch.matmul(q, k)
-        att_weight = self.mask_attention_weight(att_weight)
-        att_weight = torch.nn.functional.softmax(att_weight / math.sqrt(v.size(-1)), dim=-1)
-        att_weight = self.attention_dropout(att_weight)
+        att_weight = self.masked_attention_weight(q, k, v)
         # batch, head, seq, dim/head
         context_vector = torch.matmul(att_weight, v)
         # batch, seq, dim/head, head

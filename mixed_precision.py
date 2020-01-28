@@ -1,4 +1,4 @@
-""" mixed precision training
+""" WIP: mixed precision training
 
 Operations that can use FP16 storage
 - matrix multiplications (linear, matmul, bmm, conv)

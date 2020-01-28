@@ -289,7 +289,7 @@ class GPT2:
         for data in data_loader:
             inputs, outputs = data
             (logit, prob, pred), _ = self.__net(inputs)
-            print(inputs[0, -3:], outputs[0, -3:], pred[0, -3:])
+            # print(inputs[0, -3:], outputs[0, -3:], pred[0, -3:])
             logit = logit.view(-1, logit.size(-1))
             outputs = outputs.view(-1)
             full_loss += len(outputs) * self.__loss(logit, outputs).cpu().item()
