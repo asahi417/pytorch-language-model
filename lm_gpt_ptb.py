@@ -288,16 +288,10 @@ class GPT2:
         full_loss = 0
         for data in data_loader:
             inputs, outputs = data
-            print()
-            print(inputs.shape)
             (logit, prob, pred), _ = self.__net(inputs)
-            print(inputs[0, :5], outputs[0, :5], pred[0, :5])
+            print(inputs[0, -3:], outputs[0, -3:], pred[0, -3:])
             logit = logit.view(-1, logit.size(-1))
-            print(logit.shape)
             outputs = outputs.view(-1)
-            print(outputs.shape, len(outputs))
-            tmp_loss = self.__loss(logit, outputs).cpu().item()
-            print(tmp_loss)
             full_loss += len(outputs) * self.__loss(logit, outputs).cpu().item()
             full_seq_length += len(outputs)
         mean_loss = full_loss / full_seq_length
