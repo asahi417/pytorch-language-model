@@ -10,6 +10,26 @@ cd pytorch-tutorial
 pip install -r requirement.txt
 ```
 
+### [GPT2 Language Model on SentencePieceTokenizer](./lm_gpt_ptb.py)
+Build PTB corpus by sentence piece  
+
+```
+python corpus_tokenizer.py 
+```
+
+Train LSTM language model on PTB
+
+```
+python lm_gpt_ptb.py
+```
+
+Hyperparameter can be changed by editing [toml file](./parameters/lm_lstm_ptb.toml).
+
+***Mixed precision training***
+
+WIP
+
+
 ### [LSTM Language Model on SentencePieceTokenizer](./lm_lstm_ptb.py)  
 
 Build PTB corpus by sentence piece  

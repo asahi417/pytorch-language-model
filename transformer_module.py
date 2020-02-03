@@ -173,7 +173,7 @@ class SelfMaskedAttention(nn.Module):
             k = torch.cat([cached_k, k], dim=3)
         return q, k, v
 
-    def mask_attention_weight(self, att_weight):
+    def masked_attention_weight(self, q, k, v):
         """ causal mask attention weight by lower triangular mask
 
         [[1., 0., 0., 0., 0.],
@@ -184,20 +184,34 @@ class SelfMaskedAttention(nn.Module):
 
          Parameter
         -----------
-        att_weight: tensor (batch, head, seq, seq + cache)
-            3rd axis is attended, and 4th is attending
+        q: tensor (batch, self.__n_head, seq, dim / self.__n_head)
+        k: tensor (batch, self.__n_head, dim / self.__n_head, seq + cached_seq)
+        v: tensor (batch, self.__n_head, seq + cached_seq, dim / self.__n_head)
 
          Return
         -----------
-        att_weight: tensor (batch, head, seq, seq)
+        att_weight: tensor (batch, head, seq, seq + cache)
+            3rd axis is attended, and 4th is attending
         """
+        att_weight = torch.matmul(q, k)
+
         batch, n_head, seq_attended, seq_attending = att_weight.size()
         assert seq_attending >= seq_attended
         assert n_head == self.__n_head
         assert self.__n_context >= seq_attended
         assert self.__n_context + self.__max_cache_size >= seq_attending
-        att_weight = self.mask[:seq_attended, :seq_attending].clone().detach() * att_weight
+        mask = self.mask[:seq_attended, :seq_attending]
+        att_weight = self.masked_softmax(att_weight / math.sqrt(v.size(-1)), mask, dim=-1)
+        att_weight = self.attention_dropout(att_weight)
         return att_weight
+
+    @staticmethod
+    def masked_softmax(vec, mask, dim=1, epsilon=1e-5):
+        """ softmax ignoring zero value """
+        exps = torch.exp(vec.float())
+        masked_exps = exps * mask.float()
+        masked_sums = masked_exps.sum(dim, keepdim=True) + epsilon
+        return masked_exps / masked_sums
 
     def forward(self, x, cached_key_value: list=None):
         """ get attended context vector
@@ -214,12 +228,8 @@ class SelfMaskedAttention(nn.Module):
                 `value` tensor (batch, head, seq + cache_size, dim/head)
         """
         q, k, v = self.query_key_value(x, cached_key_value)
-        # print(v.shape)
         # attention mask: batch, head, seq, seq + cache
-        att_weight = torch.matmul(q, k)
-        att_weight = self.mask_attention_weight(att_weight)
-        att_weight = torch.nn.functional.softmax(att_weight / math.sqrt(v.size(-1)), dim=-1)
-        att_weight = self.attention_dropout(att_weight)
+        att_weight = self.masked_attention_weight(q, k, v)
         # batch, head, seq, dim/head
         context_vector = torch.matmul(att_weight, v)
         # batch, seq, dim/head, head
@@ -278,9 +288,8 @@ class TransformerBlock(nn.Module):
                 `value` tensor (batch, head, seq + cache_size, dim/head)
         """
         c, (k, v) = self.self_attention(self.layer_norm_1(x), cached_key_value=cached_key_value)
-        x += c
-        x += self.pointwise_ff(self.layer_norm_2(x))
-        return x, (k, v)
+        output = x + self.pointwise_ff(self.layer_norm_2(x + c))
+        return output, (k, v)
 
 
 class TransformerDecoder(nn.Module):
@@ -353,7 +362,6 @@ class TransformerDecoder(nn.Module):
                 cache_length = min(k.size(-1), self.__max_cache_size)
                 k = k[:, :, :,  -cache_length:].detach()
                 v = v[:, :, -cache_length:, :].detach()
-                # print(k.shape, v.shape, x.shape)
 
             cached_key_value_new.append((k, v))
 
@@ -464,8 +472,8 @@ class BaseGPT2(nn.Module):
 
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
-        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].clone().detach()
-        p_embedding = self.position_embedding(position_ids.unsqueeze(0))
+        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].unsqueeze(0)
+        p_embedding = self.position_embedding(position_ids)
         embedding = self.embedding_dropout(p_embedding + w_embedding)
 
         # transform
@@ -474,11 +482,12 @@ class BaseGPT2(nn.Module):
         # get output
         batch, seq, dim = logit.size()
         logit = logit.view(batch * seq, dim)  # (batch, seq, dim) -> (batch * seq, dim)
-        output = self.word_decoding(logit)  # (batch * seq, dim) -> (batch * seq, vocab)
+        output = self.word_decoding(logit).float()  # (batch * seq, dim) -> (batch * seq, vocab)
 
         # get pred/prob
         pred = torch.max(output, dim=1)[1].view(batch, seq)
         prob = torch.nn.functional.softmax(output, dim=1).view(batch, seq, output.size(1))
+        output = output.view(batch, seq, output.size(1))
         return (output, prob, pred), cached_key_value
 
 
