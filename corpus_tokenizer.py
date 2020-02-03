@@ -1,6 +1,9 @@
 """ train tokenizer on dataset from torchtext with huggingface tokenizers
 https://github.com/pytorch/text#datasets
 https://github.com/huggingface/tokenizers/tree/master/bindings/python
+
+https://github.com/Smerity/sha-rnn/blob/master/getdata.sh
+https://torchtext.readthedocs.io/en/latest/datasets.html#wikitext103
 """
 import tokenizers
 import torchtext
@@ -9,7 +12,6 @@ import os
 # for logger
 import logging
 from logging.config import dictConfig
-import json
 
 
 def create_log():
@@ -83,6 +85,23 @@ def get_data(name):
                 with open(__file_output, 'w') as _f_w:
                     _f_w.write(_f_r.read().replace('\n', '<eos>'))
         return output_files
+    elif name == 'WikiText103':
+        torchtext.datasets.WikiText103.splits(data_field, root='./data')
+        file_path_train = './data/wikitext-103/wikitext-103/ptb.train.tokens'
+        file_path_valid = './data/wikitext-103/wikitext-103/ptb.valid.tokens'
+        file_path_test = './data/wikitext-103/wikitext-103/ptb.test.tokens'
+        output_files = []
+        for __file in [file_path_train, file_path_valid, file_path_test]:
+            __file_output = __file.replace('.tokens', '.eos.txt')
+            output_files.append(__file_output)
+            if os.path.exists(__file_output):
+                continue
+            with open(__file, 'r') as _f_r:
+                with open(__file_output, 'w') as _f_w:
+                    _f_w.write(_f_r.read().replace('\n', '<eos>'))
+        return output_files
+    elif name == 'enwiki8':
+        pass
     else:
         raise ValueError('unknown data %s' % name)
 
@@ -136,11 +155,6 @@ if __name__ == '__main__':
         _logger.info(' - converting file %s' % _file)
         with open(_file, 'r') as f:
             token_ids = ' '.join([str(i) for i in tokenizer.encode(f.read()).ids])
-            # token_ids_list = []
-            # for n, text in enumerate(f.read().split('<eos>')):
-            #     encoded_ids = tokenizer.encode(text).ids
-            #     token_ids_list.append(' '.join([str(i) for i in encoded_ids]))
-        # token_ids = '\n'.join(token_ids_list)
         _file = _file.replace('.txt', '.id.txt')
         with open(_file, 'w') as f:
             f.write(token_ids)
