@@ -56,7 +56,7 @@ and here is a brief result with different learning rate settings.
 Test perplexity of the best model (learning rate as 0.001) is 86.73
 
 ### Others
-- [image recognition](./ir_cnn_cifar10.py)
-- [image recognition with pre-trained checkpoint](./ir_resnet_hymenoptera.py)
+- [image recognition](helper/ir_cnn_cifar10.py)
+- [image recognition with pre-trained checkpoint](helper/ir_resnet_hymenoptera.py)
 
 

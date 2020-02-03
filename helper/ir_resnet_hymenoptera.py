@@ -1,12 +1,16 @@
-""" pytorch sample of image recognition on CIFAIR10
+""" pytorch sample of image recognition on hymenoptera_data
 
-* logging instance loss
+* ResNet architecture & finetune from pre-trained checkpoint
+* logging instance loss/accuracy with progress interval
 * checkpoint manager
-* save checkpoints
+* save the best model in terms of valid accuracy
 * tensorboard
+* learning rate scheduler
+
 """
 
 # for model
+import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -178,67 +182,28 @@ class ParameterManager:
                 return target_checkpoints_path, parameter
 
 
-class Net(nn.Module):
-    """ Network Architecture """
-
-    def __init__(self):
-        """ Network Architecture """
-        super(Net, self).__init__()
-        # components
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
-
-    def forward(self, x):
-        """ model output
-
-         Parameter
-        -------------
-        x: tensor (batch, height, width, ch)
-
-         Return
-        -------------
-        x: logit (batch, dim)
-        y: prediction (batch, )
-        p: probability (batch, dim)
-        """
-        x = self.pool(nn.functional.relu(self.conv1(x)))
-        x = self.pool(nn.functional.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 5 * 5)
-        x = nn.functional.relu(self.fc1(x))
-        x = nn.functional.relu(self.fc2(x))
-        x = self.fc3(x)
-        _, y = torch.max(x, dim=-1)
-        p = torch.nn.functional.softmax(x, dim=1)
-        return x, y, p
-
-
-class ConvNet:
-    """ CNN based image classifier """
+class ResNet:
+    """ ResNet image classifier """
 
     def __init__(self,
-                 lr: float = 0.001,
-                 momentum: float = 0.9,
                  progress_interval: int = 20000,
-                 checkpoint_dir: str = None):
-        """ CNN based image classifier
-        * Allocate a GPU automatically; specify by CUDA_GPU_DEVICES
-        * Load checkpoints if it exists
+                 checkpoint_dir: str = None,
+                 **kwargs):
+        """ ResNet image classifier
+        * Allocate a GPU automatically; specify by CUDA_VISIBLE_DEVICES
         """
         self.__logger = create_log()
-        self.__logger.debug('initialize network: *** ConvNet for Image Classification ***')
+        self.__logger.debug('initialize network: *** ResNet for Image Classification ***')
         # setup parameter
         self.__param = ParameterManager(
             checkpoint_dir=checkpoint_dir,
-            default_parameter='./parameters/ir_cnn_cifar10.toml',
-            lr=lr,
-            momentum=momentum)
+            default_parameter='./helper/ir_resnet_hymenoptera.toml',
+            **kwargs)
         self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
         # build network
-        self.__net = Net()
+        self.__net = torchvision.models.resnet18(pretrained=True)
+        self.__net.fc = nn.Linear(self.__net.fc.in_features, self.__param('label_size'))
+        # GPU allocation
         if torch.cuda.device_count() >= 1:
             self.__logger.debug('running on GPU')
             self.if_use_gpu = True
@@ -246,9 +211,8 @@ class ConvNet:
         else:
             self.if_use_gpu = False
         # optimizer
-        self.__optimizer = optim.SGD(self.__net.parameters(),
-                                     lr=self.__param('lr'),
-                                     momentum=self.__param('momentum'))
+        self.__optimizer = optim.SGD(
+            self.__net.parameters(), lr=self.__param('lr'), momentum=self.__param('momentum'))
         # loss definition (CrossEntropyLoss includes softmax inside)
         self.__loss = nn.CrossEntropyLoss()
         # load pre-trained ckpt
@@ -278,26 +242,46 @@ class ConvNet:
               data_valid,
               epoch: int):
         """ train model """
+        best_model_wts = copy.deepcopy(self.__net.state_dict())
+        best_acc = 0
+        best_epoch = 0
+
+        assert data_train.classes == data_valid.classes
+        assert len(data_train.classes) == self.__param('label_size')
+
         self.__logger.debug('data loader instance')
         loader_train = torch.utils.data.DataLoader(
-            data_train, batch_size=self.__param('batch_size'), shuffle=True, num_workers=2)
+            data_train, batch_size=self.__param('batch_size'), shuffle=True, num_workers=4)
         loader_valid = torch.utils.data.DataLoader(
-            data_valid, batch_size=self.__param('batch_size'), shuffle=False, num_workers=2)
+            data_valid, batch_size=self.__param('batch_size'), shuffle=False, num_workers=4)
 
         try:
-            for epoch in range(epoch):  # loop over the epoch
-                self.__epoch_train(loader_train, epoch_n=epoch)
-                self.__epoch_valid(loader_valid, epoch_n=epoch)
+            for e in range(epoch):  # loop over the epoch
+
+                loss, acc = self.__epoch_train(loader_train, epoch_n=e)
+                self.__logger.debug('[epoch %i/%i] (train) loss: %.3f, acc: %.3f' % (e, epoch, loss, acc))
+
+                loss, acc = self.__epoch_valid(loader_valid, epoch_n=e)
+                self.__logger.debug('[epoch %i/%i] (valid) loss: %.3f, acc: %.3f' % (e, epoch, loss, acc))
+
+                if acc > best_acc:
+                    best_model_wts = copy.deepcopy(self.__net.state_dict())
+                    best_epoch = e
+                    best_acc = acc
+
         except KeyboardInterrupt:
             self.__logger.info('*** KeyboardInterrupt ***')
+
         self.__writer.close()
-        torch.save(self.__net.state_dict(), self.__checkpoint_model)
-        self.__logger.debug('complete training')
+        self.__logger.debug('best model: epoch %i, valid accuracy %0.3f' % (best_epoch, best_acc))
+        torch.save(best_model_wts, self.__checkpoint_model)
+        self.__logger.debug('complete training: best model ckpt was saved at %s' % self.__checkpoint_model)
 
     def __epoch_train(self,
                       data_loader,
                       epoch_n: int):
         """ single epoch process for training """
+        self.__net.train()
         mean_loss = 0.0
         correct_count = 0.0
         data_size = 0.0
@@ -311,7 +295,8 @@ class ConvNet:
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
-            logit, pred, prob = self.__net(inputs)
+            logit = self.__net(inputs)
+            _, pred = torch.max(logit, 1)
 
             tmp_loss = self.__loss(logit, labels)
             # backward: calculate gradient
@@ -330,45 +315,69 @@ class ConvNet:
             mean_loss += loss
 
             if i % self.__progress_interval == 0:
-                self.__logger.debug(' * epoch %i (%i/%i) instant loss: %.3f' %
-                                    (epoch_n, i, len(data_loader), inst_loss / self.__progress_interval))
+                inst_loss = inst_loss / self.__progress_interval
+                self.__logger.debug(' * (%i/%i) instant loss: %.3f' % (i, len(data_loader), inst_loss))
                 inst_loss = 0.0
 
-        self.__logger.debug('[epoch %i] (train) loss: %.3f, acc: %.3f' %
-                            (epoch_n, mean_loss / len(data_loader), correct_count / data_size))
+        mean_loss = mean_loss / len(data_loader)
+        mean_accuracy = correct_count / data_size
+        return mean_loss, mean_accuracy
 
     def __epoch_valid(self,
                       data_loader,
                       epoch_n: int):
         """ single epoch process for validation """
+        self.__net.eval()
         mean_loss = 0.0
         correct_count = 0.0
         data_size = 0.0
+
         for data in data_loader:
             inputs, labels = data
             if self.if_use_gpu:
                 inputs, labels = inputs.cuda(), labels.cuda()
-            logit, pred, _ = self.__net(inputs)
+            logit = self.__net(inputs)
+            _, pred = torch.max(logit, 1)
             correct_count += ((pred == labels).cpu().float().sum()).item()
             mean_loss += self.__loss(logit, labels).cpu().item()
             data_size += len(labels)
         self.__writer.add_scalar('valid/loss', mean_loss / len(data_loader), epoch_n)
         self.__writer.add_scalar('valid/accuracy', correct_count / data_size, epoch_n)
-        self.__logger.debug('[epoch %i] (valid) loss: %.3f, acc: %.3f'
-                            % (epoch_n, mean_loss / len(data_loader), correct_count / data_size))
+        mean_loss = mean_loss / len(data_loader)
+        mean_accuracy = correct_count / data_size
+        return mean_loss, mean_accuracy
 
 
 if __name__ == '__main__':
-    # CIFIAR 10 data loader
-    transform = transforms.Compose(
-        [transforms.ToTensor(),
-         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+    # data transoforms
+    data_transforms = {
+        'train': transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ]),
+        'val': transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ]),
+    }
+
+    # data loader
+    data_dir_train = './data/hymenoptera_data/train'
+    data_dir_val = './data/hymenoptera_data/val'
+    if not os.path.exists(data_dir_train) or not os.path.exists(data_dir_train):
+        raise ValueError('please download data from `https://download.pytorch.org/tutorial/hymenoptera_data.zip` and'
+                         'put it under `./data`')
+
+    dataset_train = torchvision.datasets.ImageFolder(data_dir_train, data_transforms['train'])
+    dataset_val = torchvision.datasets.ImageFolder(data_dir_val, data_transforms['val'])
 
     # main
-    nn_model = ConvNet(checkpoint_dir='./ckpt/ir_cnn_cifar10')
-    nn_model.train(data_train=trainset, data_valid=testset, epoch=100)
+    nn_model = ResNet(checkpoint_dir='./ckpt/ir_resnet_hymenoptera')
+    nn_model.train(data_train=dataset_train, data_valid=dataset_val, epoch=25)
 
 
 

@@ -1,109 +1,16 @@
-""" train tokenizer on dataset from torchtext with huggingface tokenizers
+""" Will not be used annymore
+train tokenizer on dataset from torchtext with huggingface tokenizers
 https://github.com/pytorch/text#datasets
 https://github.com/huggingface/tokenizers/tree/master/bindings/python
 
 https://github.com/Smerity/sha-rnn/blob/master/getdata.sh
 https://torchtext.readthedocs.io/en/latest/datasets.html#wikitext103
+https://github.com/Smerity/sha-rnn/blob/master/data.py#L27
 """
-import tokenizers
-import torchtext
 import argparse
 import os
-# for logger
-import logging
-from logging.config import dictConfig
-
-
-def create_log():
-    """ simple Logger
-    Usage
-    -------------------
-    logger.info(message)
-    logger.error(error)
-    """
-    logging_config = dict(
-        version=1,
-        formatters={
-            'f': {'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'}
-        },
-        handlers={
-            'h': {'class': 'logging.StreamHandler',
-                  'formatter': 'f',
-                  'level': logging.DEBUG}
-        },
-        root={
-            'handlers': ['h'],
-            'level': logging.DEBUG,
-        },
-    )
-    dictConfig(logging_config)
-    logger = logging.getLogger()
-    return logger
-
-
-def get_tokenizer(name, checkpoint_dir=None, checkpoint_name=None):
-    if_trained = False
-    if checkpoint_dir is not None and checkpoint_name is not None:
-        merges = '%s-merges.txt' % os.path.join(checkpoint_dir, checkpoint_name)
-        vocab = '%s-vocab.json' % os.path.join(checkpoint_dir, checkpoint_name)
-        if os.path.exists(merges) and os.path.exists(vocab):
-            if_trained = True
-        else:
-            merges = None
-            vocab = None
-    else:
-        merges = None
-        vocab = None
-
-    valid_models = ['BPETokenizer', 'ByteLevelBPETokenizer', 'SentencePieceBPETokenizer', 'BertWordPieceTokenizer']
-    if name == 'BPETokenizer':
-        return tokenizers.BPETokenizer(vocab, merges), if_trained
-    elif name == 'ByteLevelBPETokenizer':
-        return tokenizers.ByteLevelBPETokenizer(vocab, merges), if_trained
-    elif name == 'SentencePieceBPETokenizer':
-        return tokenizers.SentencePieceBPETokenizer(vocab, merges), if_trained
-    elif name == 'BertWordPieceTokenizer':
-        return tokenizers.BertWordPieceTokenizer(vocab), if_trained
-    else:
-        raise ValueError('unknown tokenizer %s, should be one of %s' % (name, str(valid_models)))
-
-
-def get_data(name):
-    data_field = torchtext.data.Field(sequential=True)
-    if name == 'PennTreebank':
-        torchtext.datasets.PennTreebank.splits(data_field, root='./data')
-        file_path_train = './data/penn-treebank/ptb.train.txt'
-        file_path_valid = './data/penn-treebank/ptb.valid.txt'
-        file_path_test = './data/penn-treebank/ptb.test.txt'
-        output_files = []
-        for __file in [file_path_train, file_path_valid, file_path_test]:
-            __file_output = __file.replace('.txt', '.eos.txt')
-            output_files.append(__file_output)
-            if os.path.exists(__file_output):
-                continue
-            with open(__file, 'r') as _f_r:
-                with open(__file_output, 'w') as _f_w:
-                    _f_w.write(_f_r.read().replace('\n', '<eos>'))
-        return output_files
-    elif name == 'WikiText103':
-        torchtext.datasets.WikiText103.splits(data_field, root='./data')
-        file_path_train = './data/wikitext-103/wikitext-103/ptb.train.tokens'
-        file_path_valid = './data/wikitext-103/wikitext-103/ptb.valid.tokens'
-        file_path_test = './data/wikitext-103/wikitext-103/ptb.test.tokens'
-        output_files = []
-        for __file in [file_path_train, file_path_valid, file_path_test]:
-            __file_output = __file.replace('.tokens', '.eos.txt')
-            output_files.append(__file_output)
-            if os.path.exists(__file_output):
-                continue
-            with open(__file, 'r') as _f_r:
-                with open(__file_output, 'w') as _f_w:
-                    _f_w.write(_f_r.read().replace('\n', '<eos>'))
-        return output_files
-    elif name == 'enwiki8':
-        pass
-    else:
-        raise ValueError('unknown data %s' % name)
+from util import create_log
+from data import
 
 
 def get_options():
