@@ -69,7 +69,7 @@ class StackedLSTM(nn.Module):
                  embedding_dim: int,
                  n_layers: int,
                  n_hidden_units: int,
-                 sequence_length: int,
+                 n_context: int,
                  tie_weights: bool,
                  init_range: float):
         """ Network Architecture """
@@ -99,7 +99,7 @@ class StackedLSTM(nn.Module):
             # so encoder's weight can be directly copied to decoder.
             self.__decoding_layer.weight = self.__embedding_layer.weight
 
-        self.__sequence_length = sequence_length
+        self.__sequence_length = n_context
         self.__n_layers = n_layers
         self.__n_hidden_units = n_hidden_units
         self.__embedding_dim = embedding_dim
@@ -136,18 +136,18 @@ class StackedLSTM(nn.Module):
 
          Parameter
         -------------
-        input_token: input token id batch tensor (batch, sequence_length)
+        input_token: input token id batch tensor (batch, n_context)
         hidden: list of two tensors, each has (layer, batch, dim) shape
 
          Return
         -------------
         (output, prob, pred):
-            output: raw output from LSTM (sequence_length, batch, vocab size)
-            prob: softmax activated output (sequence_length, batch, vocab size)
-            pred: prediction (sequence_length, batch)
+            output: raw output from LSTM (n_context, batch, vocab size)
+            prob: softmax activated output (n_context, batch, vocab size)
+            pred: prediction (n_context, batch)
         new_hidden: list of tensor (layer, batch, dim)
         """
-        # (batch, sequence_length) -> (sequence_length, batch)
+        # (batch, n_context) -> (n_context, batch)
         input_token = input_token.permute(1, 0).contiguous()
         if hidden is None:
             hidden = self.init_state(input_token.shape[1])

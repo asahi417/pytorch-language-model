@@ -3,7 +3,6 @@ import os
 import torch
 import torchtext
 import tokenizers
-import argparse
 import zipfile
 from util import create_log
 from util_base_tokenizer import WhitespaceTokenizer
@@ -68,8 +67,6 @@ def get_tokenizer(name: str, checkpoint_dir: str = None, checkpoint_name: str = 
         return tokenizers.BertWordPieceTokenizer(vocab), if_trained
     elif name == 'WhitespaceTokenizer':
         return WhitespaceTokenizer(vocab), if_trained
-    elif name == 'CharTokenizer':
-        return CharTokenizer(vocab), if_trained
     else:
         raise ValueError('unknown tokenizer %s' % name)
 
@@ -92,7 +89,7 @@ def get_data(name,
 
      Return
     ------------
-    list of files (train/valid/test) for token_ids
+    list of token_id list (train/valid/test)
     """
     logger = create_log()
 
@@ -147,14 +144,15 @@ def get_data(name,
 
     # tokenize full corpus
     def convert_file(__file_path):
+        __file_path_output = os.path.join(save_dir, __file_path.split('/')[-1]).replace('.txt', '.id.txt')
+        if os.path.exists(__file_path_output):
+            return [int(i) for i in open(__file_path_output, 'r').read().split()]
+
         logger.debug(' - converting file %s' % __file_path)
-        with open(__file_path, 'r') as _f:
-            token_ids = ' '.join([str(i) for i in tokenizer.encode(_f.read()).ids])
-        __file_path = os.path.join(save_dir, __file_path.split('/')[-1]).replace('.txt', '.id.txt')
-        with open(__file_path, 'w') as _f:
-            _f.write(token_ids)
-        logger.debug(' - saved at %s' % __file_path)
-        return __file_path
+        token_ids = [int(i) for i in tokenizer.encode(open(__file_path, 'r').read()).ids]
+        open(__file_path_output, 'w').write(' '.join([str(i) for i in token_ids]))
+        logger.debug(' - saved at %s' % __file_path_output)
+        return token_ids
 
     logger.info('tokenize corpus')
     save_dir = os.path.join(data_path, tokenizer_name)
@@ -212,18 +210,4 @@ class BatchFeeder:
         y = self._data[:, self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1].contiguous()
         self._index += 1
         return x, y
-
-
-def get_options():
-    parser = argparse.ArgumentParser(description='Train tokenizer', formatter_class=argparse.RawTextHelpFormatter)
-    _p = {'nargs': '?', 'action': 'store', 'const': None, 'choices': None, 'metavar': None}
-    parser.add_argument('-t', '--tokenizer', help='tokenizer', default='SentencePieceBPETokenizer', type=str, **_p)
-    parser.add_argument('-d', '--data', help='data', default='PennTreebank', type=str, **_p)
-    return parser.parse_args()
-
-
-if __name__ == '__main__':
-    # Test
-    arguments = get_options()
-    file_paths = get_data(arguments.data, arguments.tokenizer)
 

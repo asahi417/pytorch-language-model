@@ -21,9 +21,9 @@ class LanguageModel:
                  checkpoint_dir: str = None,
                  default_parameter: str = None,
                  **kwargs):
-        """ LSTM bases language model """
+        """ language model """
         self.__logger = create_log()
-        self.__logger.debug('initialize network: *** %s based language model ***' % module_type)
+        self.__logger.debug('initialize network: *** %s based language model ***' % model_type)
 
         # setup parameter
         self.__param = ParameterManager(
@@ -45,7 +45,7 @@ class LanguageModel:
                 embedding_dim=self.__param("embedding_dim"),
                 n_layers=self.__param("n_layers"),
                 n_hidden_units=self.__param("n_hidden_units"),
-                sequence_length=self.__param("sequence_length"),
+                n_context=self.__param("n_context"),
                 tie_weights=self.__param("tie_weights"),
                 init_range=self.__param("init_range")
             )
@@ -144,14 +144,14 @@ class LanguageModel:
             if self.n_gpu > 0:
                 torch.cuda.manual_seed_all(seed)
 
-    # def evaluate(self, data_valid, data_test=None):
-    #     """ evaluate model """
-    #     batch_param = dict(batch_size=self.__param('batch_size'), num_steps=self.__param('n_context'))
-    #     loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_valid, **batch_param))
-    #     self.__logger.debug('(val)  loss: %.5f, ppl: %.5f' % (loss, ppl))
-    #     if data_test:
-    #         loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_test, **batch_param), is_test=True)
-    #         self.__logger.debug('(test) loss: %.5f, ppl: %.5f' % (loss, ppl))
+    def evaluate(self, data_valid, data_test=None):
+        """ evaluate model """
+        batch_param = dict(batch_size=self.__param('batch_size'), num_steps=self.__param('n_context'))
+        loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_valid, **batch_param))
+        self.__logger.debug('(val)  loss: %.5f, ppl: %.5f' % (loss, ppl))
+        if data_test:
+            loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_test, **batch_param), is_test=True)
+            self.__logger.debug('(test) loss: %.5f, ppl: %.5f' % (loss, ppl))
 
     def train(self,
               data_train: list,
@@ -285,14 +285,19 @@ def get_options():
 
 if __name__ == '__main__':
     arguments = get_options()
-    file_paths = get_data(arguments.data, arguments.tokenizer)
+    _data_train, _data_valid, _data_test = get_data(arguments.data, arguments.tokenizer)
 
-    model_instance = LanguageModel(checkpoint=arguments.ckpt,
-                                   checkpoint_dir='./ckpt/lm_%s/%s' % arguments.model,
-                                   default_parameter='./parameters/lm_%s.toml' % arguments.model)
+    model_instance = LanguageModel(
+        checkpoint=arguments.ckpt,
+        checkpoint_dir='./ckpt/%s/%s/%s' % (arguments.data, arguments.tokenizer, arguments.model),
+        default_parameter='./parameters/%s.toml' % arguments.model)
 
-    model_instance.train(data_train=_data_train,
-                         data_valid=_data_valid,
-                         data_test=_data_test,
-                         progress_interval=20)
+    if arguments.evaluate:
+        model_instance.evaluate(data_valid=_data_valid, data_test=_data_test)
+
+    else:
+        model_instance.train(data_train=_data_train,
+                             data_valid=_data_valid,
+                             data_test=_data_test,
+                             progress_interval=20)
 
