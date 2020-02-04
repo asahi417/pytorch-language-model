@@ -1,5 +1,5 @@
-# Pytorch scripts
-Pytorch self-contained sample scripts:
+# Pytorch Language Modeling
+Pytorch language modeling.
 
 ## Contents
 All the script work with python>=3.6. 
@@ -10,41 +10,13 @@ cd pytorch-tutorial
 pip install -r requirement.txt
 ```
 
-### [GPT2 Language Model on SentencePieceTokenizer](./lm_gpt_ptb.py)
-Build PTB corpus by sentence piece  
+### LSTM Language Model on SentencePieceTokenizer  
 
+Train LSTM language model on PTB  
 ```
-python corpus_tokenizer.py 
+python main.py 
 ```
-
-Train LSTM language model on PTB
-
-```
-python lm_gpt_ptb.py
-```
-
-Hyperparameter can be changed by editing [toml file](parameters/keep/lm_lstm_ptb.toml).
-
-***Mixed precision training***
-
-WIP
-
-
-### [LSTM Language Model on SentencePieceTokenizer](./lm_lstm_ptb.py)  
-
-Build PTB corpus by sentence piece  
-
-```
-python corpus_tokenizer.py 
-```
-
-Train LSTM language model on PTB
-
-```
-python lm_lstm_ptb.py
-```
-
-Hyperparameter can be changed by editing [toml file](parameters/keep/lm_lstm_ptb.toml),
+Hyperparameter can be changed by editing [toml file](parameters/lstm.toml),
 and here is a brief result with different learning rate settings.
 
 | Learning Rate | perplexity (valid) | epoch |
@@ -54,9 +26,4 @@ and here is a brief result with different learning rate settings.
 | 0.0001        |            90.89   | 131   |
 
 Test perplexity of the best model (learning rate as 0.001) is 86.73
-
-### Others
-- [image recognition](helper/ir_cnn_cifar10.py)
-- [image recognition with pre-trained checkpoint](helper/ir_resnet_hymenoptera.py)
-
 
