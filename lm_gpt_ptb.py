@@ -10,12 +10,12 @@ import argparse
 import random
 from torch.utils.tensorboard import SummaryWriter
 
-from transformer_module import BaseGPT2
+from module_transformer import GPT2
 from util import create_log, ParameterManager, BatchFeeder
-from huggingface_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
+from util_hf_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
 
-class GPT2:
+class LanguageModel:
     """ GPT2 language model """
 
     def __init__(self,
@@ -34,7 +34,7 @@ class GPT2:
             **kwargs)
         self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
         # build network
-        self.__net = BaseGPT2(
+        self.__net = GPT2(
             n_layer=self.__param("n_layer"),
             n_embedding=self.__param("n_embedding"),
             n_state_ffn=self.__param("n_state_ffn"),
@@ -199,6 +199,8 @@ class GPT2:
 
             # get the inputs (data is a list of [inputs, labels])
             inputs, outputs = data
+            if self.n_gpu > 0:
+                inputs, outputs = inputs.cuda(), outputs.cuda()
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss

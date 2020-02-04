@@ -6,7 +6,7 @@ import tokenizers
 import argparse
 import zipfile
 from util import create_log
-from base_tokenizer import WhitespaceTokenizer
+from util_base_tokenizer import WhitespaceTokenizer
 
 
 __all__ = [

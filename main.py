@@ -1,231 +1,71 @@
-""" pytorch LSTM based language model """
-
-# for model
+""" language model training/evaluation"""
+import argparse
 import os
 import copy
 import random
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.autograd import Variable
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from util import create_log, ParameterManager
 from util_data import BatchFeeder, get_data
-
-
-class LockedDropout(nn.Module):
-    """ locked dropout/variational dropout described in https://arxiv.org/pdf/1708.02182.pdf
-    * drop all the feature in target batch, instead of fully random dropout
-    """
-
-    def __init__(self, dropout: float = 0.5):
-        super().__init__()
-        self.__dropout = dropout
-
-    def forward(self, x):
-        if not self.training or not self.__dropout:
-            return x
-        m = x.data.new(1, x.size(1), x.size(2))
-        m = m.bernoulli_(1 - self.__dropout)  # rescale un-dropped values to keep distribution consistent
-        mask = Variable(m, requires_grad=False) / (1 - self.__dropout)
-        mask = mask.expand_as(x)
-        return mask * x
-
-
-class EmbeddingLookup(nn.Module):
-    """ Embedding lookup layer with word dropout described in https://arxiv.org/pdf/1708.02182.pdf
-    * drop all the embedding in target word, instead of fully random dropout
-    """
-
-    def __init__(self, dropout: float = 0.1):
-        super().__init__()
-        self.__dropout = dropout
-
-    def forward(self, embedding_mat, words):
-        if not self.training or not self.__dropout:
-            masked_embed_weight = embedding_mat.weight
-        else:
-            mask = embedding_mat.weight.data.new().resize_((embedding_mat.weight.size(0), 1))
-            # rescale un-dropped values to keep distribution consistent
-            mask = mask.bernoulli_(1 - self.__dropout).expand_as(embedding_mat.weight) / (1 - self.__dropout)
-            masked_embed_weight = mask * embedding_mat.weight
-
-        # lookup embedding with mask
-        x = nn.functional.embedding(words,
-                                    weight=masked_embed_weight,
-                                    padding_idx=-1 if embedding_mat.padding_idx is None else embedding_mat.padding_idx,
-                                    max_norm=embedding_mat.max_norm,
-                                    norm_type=embedding_mat.norm_type,
-                                    scale_grad_by_freq=embedding_mat.scale_grad_by_freq,
-                                    sparse=embedding_mat.sparse)
-        return x
-
-
-class Net(nn.Module):
-    """ Network Architecture: LSTM based Language Model """
-
-    def __init__(self,
-                 dropout_word: float,
-                 dropout_embedding: float,
-                 dropout_intermediate: float,
-                 dropout_output: float,
-                 vocab_size: int,
-                 embedding_dim: int,
-                 n_layers: int,
-                 n_hidden_units: int,
-                 sequence_length: int,
-                 tie_weights: bool,
-                 init_range: float):
-        """ Network Architecture """
-        super(Net, self).__init__()
-        self.__embedding_lookup = EmbeddingLookup(dropout_word)
-        self.__dropout_embedding = LockedDropout(dropout_embedding)
-        self.__dropout_intermediate = LockedDropout(dropout_intermediate)
-        self.__dropout_output = LockedDropout(dropout_output)
-
-        cells = []
-        for i in range(n_layers):
-            if i == 0:
-                cell = nn.LSTM(embedding_dim, n_hidden_units)
-            elif i == n_layers - 1:
-                cell = nn.LSTM(n_hidden_units, embedding_dim)
-            else:
-                cell = nn.LSTM(n_hidden_units, n_hidden_units)
-            cells.append(cell)
-
-        self.__cells = nn.ModuleList(cells)
-
-        self.__embedding_layer = nn.Embedding(vocab_size, embedding_dim)
-        self.__decoding_layer = nn.Linear(embedding_dim, vocab_size, bias=False)
-
-        if tie_weights:
-            # nn.Embedding(a, b).weight.shape -> (a, b), while nn.Linear(a, b) -> (b, a)
-            # so encoder's weight can be directly copied to decoder.
-            self.__decoding_layer.weight = self.__embedding_layer.weight
-
-        self.__sequence_length = sequence_length
-        self.__n_layers = n_layers
-        self.__n_hidden_units = n_hidden_units
-        self.__embedding_dim = embedding_dim
-        self.__tie_weights = tie_weights
-        self.__vocab_size = vocab_size
-        self.__init_weights(init_range=init_range)
-
-    def __init_weights(self, init_range: float):
-        """ uniform weight initialization for encoding/decoding layer """
-        self.__embedding_layer.weight.data.uniform_(-init_range, init_range)
-        if not self.__tie_weights:
-            self.__decoding_layer.weight.data.uniform_(-init_range, init_range)
-
-    def init_state(self, batch_size: int):
-        """ get initial state of recurrent cell: list of tensor (layer, batch, dim) """
-
-        def __init_state(i):
-            if i == self.__n_layers - 1:
-                units = self.__embedding_dim
-            else:
-                units = self.__n_hidden_units
-            if torch.cuda.device_count() >= 1:
-                state = [torch.zeros((1, batch_size, units), dtype=torch.float32).cuda(),
-                         torch.zeros((1, batch_size, units), dtype=torch.float32).cuda()]
-            else:
-                state = [torch.zeros((1, batch_size, units), dtype=torch.float32),
-                         torch.zeros((1, batch_size, units), dtype=torch.float32)]
-            return state
-
-        return [__init_state(i) for i in range(self.__n_layers)]
-
-    def forward(self, input_token, hidden=None):
-        """ model output
-
-         Parameter
-        -------------
-        input_token: input token id batch tensor (batch, sequence_length)
-        hidden: list of two tensors, each has (layer, batch, dim) shape
-
-         Return
-        -------------
-        (output, prob, pred):
-            output: raw output from LSTM (sequence_length, batch, vocab size)
-            prob: softmax activated output (sequence_length, batch, vocab size)
-            pred: prediction (sequence_length, batch)
-        new_hidden: list of tensor (layer, batch, dim)
-        """
-        # (batch, sequence_length) -> (sequence_length, batch)
-        input_token = input_token.permute(1, 0).contiguous()
-        if hidden is None:
-            hidden = self.init_state(input_token.shape[1])
-        # print([i.shape for i in hidden])
-        emb = self.__embedding_lookup(self.__embedding_layer, input_token)  # lookup embedding matrix (seq, batch, dim)
-        emb = self.__dropout_embedding(emb)  # dropout embeddings
-        new_hidden = []  # hidden states
-
-        for i, (h, cell) in enumerate(zip(hidden, self.__cells)):
-            # LSTM input is (sequence, batch, dim)
-            emb, new_h = cell(emb, h)
-            # detach hidden state from the graph to not propagate gradient (treat as a constant)
-            new_h = self.repackage_hidden(new_h)
-            new_hidden.append(new_h)
-            if i == self.__n_layers - 1:
-                emb = self.__dropout_output(emb)
-            else:
-                emb = self.__dropout_intermediate(emb)
-
-        # (seq, batch, dim) -> (seq * batch, dim)
-        output = emb.view(emb.size(0) * emb.size(1), emb.size(2))
-        # (seq * batch, dim) -> (seq * batch, vocab)
-        output = self.__decoding_layer(output)
-        _, pred = torch.max(output, dim=-1)
-        prob = torch.nn.functional.softmax(output, dim=1)
-        # (seq * batch, vocab) -> (seq, batch, vocab)
-        output = output.view(emb.size(0), emb.size(1), self.__vocab_size)
-        prob = prob.view(emb.size(0), emb.size(1), self.__vocab_size)
-        # (seq * batch, vocab) -> (seq, batch,)
-        pred = pred.view(emb.size(0), emb.size(1))
-        return (output, prob, pred), new_hidden
-
-    def repackage_hidden(self, h):
-        """Wraps hidden states in new Tensors, to detach them from their history."""
-
-        if isinstance(h, torch.Tensor):
-            return h.detach()
-        else:
-            return tuple(self.repackage_hidden(v) for v in h)
+from util_hf_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
 
 class LanguageModel:
-    """ LSTM bases language model """
+    """ language model """
 
     def __init__(self,
+                 model_type: str = 'lstm',
                  checkpoint: str = None,
                  checkpoint_dir: str = None,
                  default_parameter: str = None,
                  **kwargs):
         """ LSTM bases language model """
         self.__logger = create_log()
-        self.__logger.debug('initialize network: *** LSTM based language model ***')
+        self.__logger.debug('initialize network: *** %s based language model ***' % module_type)
+
         # setup parameter
         self.__param = ParameterManager(
             checkpoint=checkpoint,
             checkpoint_dir=checkpoint_dir,
-            default_parameter=default_parameter,  # './parameters/lm_lstm_ptb.toml',
+            default_parameter=default_parameter,
             **kwargs)
         self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
+
         # build network
-        self.__net = Net(
-            dropout_word=self.__param("dropout_word"),
-            dropout_embedding=self.__param("dropout_embedding"),
-            dropout_intermediate=self.__param("dropout_intermediate"),
-            dropout_output=self.__param("dropout_output"),
-            vocab_size=self.__param("vocab_size"),
-            embedding_dim=self.__param("embedding_dim"),
-            n_layers=self.__param("n_layers"),
-            n_hidden_units=self.__param("n_hidden_units"),
-            sequence_length=self.__param("sequence_length"),
-            tie_weights=self.__param("tie_weights"),
-            init_range=self.__param("init_range")
-        )
+        if model_type == 'lstm':
+            from module_lstm import StackedLSTM
+            self.__net = StackedLSTM(
+                dropout_word=self.__param("dropout_word"),
+                dropout_embedding=self.__param("dropout_embedding"),
+                dropout_intermediate=self.__param("dropout_intermediate"),
+                dropout_output=self.__param("dropout_output"),
+                vocab_size=self.__param("vocab_size"),
+                embedding_dim=self.__param("embedding_dim"),
+                n_layers=self.__param("n_layers"),
+                n_hidden_units=self.__param("n_hidden_units"),
+                sequence_length=self.__param("sequence_length"),
+                tie_weights=self.__param("tie_weights"),
+                init_range=self.__param("init_range")
+            )
+        elif model_type == 'gpt2':
+            from module_transformer import GPT2
+            self.__net = GPT2(
+                n_layer=self.__param("n_layer"),
+                n_embedding=self.__param("n_embedding"),
+                n_state_ffn=self.__param("n_state_ffn"),
+                n_head=self.__param("n_head"),
+                n_context=self.__param("n_context"),
+                max_cache_size=self.__param("max_cache_size"),
+                residual_dropout=self.__param("residual_dropout"),
+                attention_dropout=self.__param("attention_dropout"),
+                embedding_dropout=self.__param("embedding_dropout"),
+                vocab_size=self.__param("vocab_size")
+            )
+        else:
+            raise ValueError('bad model_type: %s' % model_type)
+
         # GPU allocation
         if torch.cuda.device_count() == 1:
             self.__logger.debug('running on single GPU')
@@ -240,8 +80,17 @@ class LanguageModel:
             self.n_gpu = 0
 
         # optimizer
-        self.__optimizer = optim.Adam(
+        self.__optimizer = AdamW(
             self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
+        if self.__param('scheduler') == 'constant':
+            self.__scheduler = get_constant_schedule(self.__optimizer)
+        elif self.__param('scheduler') == 'linear':
+            self.__scheduler = get_linear_schedule_with_warmup(
+                self.__optimizer,
+                num_warmup_steps=self.__param('warmup_steps'),
+                num_training_steps=self.__param('total_steps'))
+        else:
+            raise ValueError('bad scheduler: %s' % self.__param('scheduler'))
 
         # loss definition (CrossEntropyLoss includes softmax inside)
         self.__loss = nn.CrossEntropyLoss()
@@ -251,6 +100,7 @@ class LanguageModel:
             ckpt = torch.load(self.__checkpoint_model)
             self.__net.load_state_dict(ckpt['model_state_dict'])
             self.__optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+            self.__scheduler.load_state_dict(ckpt['scheduler_state_dict'])
             self.__training_step = ckpt['training_step']  # num of training step
             self.__epoch = ckpt['epoch']
             self.__best_epoch = ckpt['best_epoch']
@@ -272,7 +122,7 @@ class LanguageModel:
     def hyperparameters(self):
         return self.__param
 
-    def __sanity_check(self, seed: int = 1234):
+    def __sanity_check(self, seed: int):
         """ sanity check as logging model size """
         self.__logger.debug('trainable variables')
         model_size = 0
@@ -344,6 +194,7 @@ class LanguageModel:
         torch.save({
             'model_state_dict': self.__net.state_dict(),
             'optimizer_state_dict': self.__optimizer.state_dict(),
+            'scheduler_state_dict': self.__scheduler.state_dict(),
             'training_step': self.__training_step,
             'epoch': self.__epoch,
             'val_ppl': val_ppl,
@@ -422,27 +273,26 @@ class LanguageModel:
 
 
 def get_options():
-    parser = argparse.ArgumentParser(description='Train tokenizer', formatter_class=argparse.RawTextHelpFormatter)
+    parser = argparse.ArgumentParser(description='Train language model', formatter_class=argparse.RawTextHelpFormatter)
     _p = {'nargs': '?', 'action': 'store', 'const': None, 'choices': None, 'metavar': None}
     parser.add_argument('-c', '--ckpt', help='pre-trained model ckpt', default=None, type=str, **_p)
     parser.add_argument('-e', '--evaluate', help='evaluation', action='store_true')
+    parser.add_argument('-d', '--data', help='dataset', default='PennTreebank', type=str, **_p)
+    parser.add_argument('-t', '--tokenizer', help='tokenizer', default='SentencePieceBPETokenizer', type=str, **_p)
+    parser.add_argument('-m', '--model', help='model', default='lstm', type=str, **_p)
     return parser.parse_args()
 
 
 if __name__ == '__main__':
-    with open('./data/penn-treebank/ptb.train.eos.id.txt', 'r') as f:
-        _data_train = [int(i) for i in f.read().split()]
-    with open('./data/penn-treebank/ptb.valid.eos.id.txt', 'r') as f:
-        _data_valid = [int(i) for i in f.read().split()]
-    with open('./data/penn-treebank/ptb.test.eos.id.txt', 'r') as f:
-        _data_test = [int(i) for i in f.read().split()]
+    arguments = get_options()
+    file_paths = get_data(arguments.data, arguments.tokenizer)
 
-    _model = LanguageModel(checkpoint=arguments.ckpt,
-                           checkpoint_dir='./ckpt/lm_lstm_ptb',
-                           default_parameter='./parameters/lm_lstm_ptb.toml')
-    _model.train(epoch=150,
-                 data_train=_data_train,
-                 data_valid=_data_valid,
-                 data_test=_data_test,
-                 progress_interval=20)
+    model_instance = LanguageModel(checkpoint=arguments.ckpt,
+                                   checkpoint_dir='./ckpt/lm_%s/%s' % arguments.model,
+                                   default_parameter='./parameters/lm_%s.toml' % arguments.model)
+
+    model_instance.train(data_train=_data_train,
+                         data_valid=_data_valid,
+                         data_test=_data_test,
+                         progress_interval=20)
 

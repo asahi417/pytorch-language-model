@@ -23,7 +23,7 @@ Train LSTM language model on PTB
 python lm_gpt_ptb.py
 ```
 
-Hyperparameter can be changed by editing [toml file](./parameters/lm_lstm_ptb.toml).
+Hyperparameter can be changed by editing [toml file](parameters/keep/lm_lstm_ptb.toml).
 
 ***Mixed precision training***
 
@@ -44,7 +44,7 @@ Train LSTM language model on PTB
 python lm_lstm_ptb.py
 ```
 
-Hyperparameter can be changed by editing [toml file](./parameters/lm_lstm_ptb.toml),
+Hyperparameter can be changed by editing [toml file](parameters/keep/lm_lstm_ptb.toml),
 and here is a brief result with different learning rate settings.
 
 | Learning Rate | perplexity (valid) | epoch |

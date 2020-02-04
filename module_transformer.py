@@ -10,7 +10,7 @@ __all__ = [
     "SelfMaskedAttention",
     "TransformerBlock",
     "TransformerDecoder",
-    "BaseGPT2"
+    "GPT2"
 ]
 
 
@@ -369,7 +369,7 @@ class TransformerDecoder(nn.Module):
         return x, cached_key_value_new
 
 
-class BaseGPT2(nn.Module):
+class GPT2(nn.Module):
     """ GPT2: transformer-based Language Model """
 
     def __init__(self,
@@ -496,7 +496,7 @@ if __name__ == '__main__':
     sample = torch.ones((_batch, _seq), dtype=torch.long)
     print('sample input:', sample.size())
 
-    gpt = BaseGPT2(
+    gpt = GPT2(
         n_layer=12,
         n_embedding=_dim,
         n_state_ffn=200,
