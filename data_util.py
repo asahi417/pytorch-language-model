@@ -3,42 +3,16 @@ import os
 import torch
 import torchtext
 import tokenizers
-import logging
-from logging.config import dictConfig
+import argparse
+from util import create_log
+from base_tokenizer import WhitespaceTokenizer, CharTokenizer
 
 
 __all__ = [
+    "get_data",
     "get_tokenizer",
     "BatchFeeder"
 ]
-
-
-def create_log():
-    """ simple Logger
-    Usage
-    -------------------
-    logger.info(message)
-    logger.error(error)
-    """
-    logging_config = dict(
-        version=1,
-        formatters={
-            'f': {'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'}
-        },
-        handlers={
-            'h': {'class': 'logging.StreamHandler',
-                  'formatter': 'f',
-                  'level': logging.DEBUG}
-        },
-        root={
-            'handlers': ['h'],
-            'level': logging.DEBUG,
-        },
-    )
-    dictConfig(logging_config)
-    logger = logging.getLogger()
-    logging.getLogger('matplotlib').setLevel(logging.WARNING)
-    return logger
 
 
 def get_tokenizer(name: str, checkpoint_dir: str = None, checkpoint_name: str = None):
@@ -47,9 +21,11 @@ def get_tokenizer(name: str, checkpoint_dir: str = None, checkpoint_name: str = 
     if checkpoint_dir is not None and checkpoint_name is not None:
         merges = '%s-merges.txt' % os.path.join(checkpoint_dir, checkpoint_name)
         vocab = '%s-vocab.json' % os.path.join(checkpoint_dir, checkpoint_name)
-        if os.path.exists(merges) and os.path.exists(vocab):
-            if_trained = True
+        if name in ['BPETokenizer', 'ByteLevelBPETokenizer', 'SentencePieceBPETokenizer']:
+            if_trained = os.path.exists(merges) and os.path.exists(vocab)
         else:
+            if_trained = os.path.exists(vocab)
+        if not if_trained:
             merges = None
             vocab = None
     else:
@@ -64,16 +40,22 @@ def get_tokenizer(name: str, checkpoint_dir: str = None, checkpoint_name: str = 
         return tokenizers.SentencePieceBPETokenizer(vocab, merges), if_trained
     elif name == 'BertWordPieceTokenizer':
         return tokenizers.BertWordPieceTokenizer(vocab), if_trained
+    elif name == 'WhitespaceTokenizer':
+        return WhitespaceTokenizer(vocab), if_trained
+    elif name == 'CharTokenizer':
+        return CharTokenizer(vocab), if_trained
     else:
         raise ValueError('unknown tokenizer %s' % name)
 
 
 def get_data(name,
-             tokenizer: str = 'split',
+             tokenizer_name: str = 'SentencePieceBPETokenizer',
              data_directory: str = './data',
              vocab_directory: str = './vocab',
              debug: bool = False):
     """ Get file path to tokenized benchmark data
+
+    TODO: Add enwiki8
 
      Parameter
     ------------
@@ -90,7 +72,7 @@ def get_data(name,
 
     # fetch benchmark data
     def convert_eos(__file_path):
-        __file_output = ''.join(__file_path.split('.')[:-1]) + '.eos.txt'
+        __file_output = '.'.join(__file_path.split('.')[:-1]) + '.eos.txt'
         if not os.path.exists(__file_output):
             with open(__file_path, 'r') as _f_r:
                 with open(__file_output, 'w') as _f_w:
@@ -107,7 +89,7 @@ def get_data(name,
         torchtext.datasets.WikiText103.splits(data_field, root=data_directory)
         data_path = os.path.join(data_directory, 'wikitext-103/wikitext-103')
         output_files = [
-            convert_eos(os.path.join(data_path, _f)) for _f in ['ptb.train.txt', 'ptb.valid.txt', 'ptb.test.txt']]
+            convert_eos(os.path.join(data_path, _f)) for _f in ['wiki.train.txt', 'wiki.valid.txt', 'wiki.test.txt']]
     # elif name == 'enwiki8':
     #     pass
     else:
@@ -115,48 +97,43 @@ def get_data(name,
     logger.debug('data %s has been downloaded' % name)
 
     # choose tokenizer
-    if tokenizer == 'split':
-        # WIP: better to implement basic tokenizer instance
-        # logger.debug('set plain tokenizer (split by halfspace)')
-        # get_tokenizer()
-    else:
-        save_dir = os.path.join(vocab_directory, tokenizer)
-        tokenizer, if_trained_flg = get_tokenizer(tokenizer, checkpoint_dir=save_dir, checkpoint_name=name)
-        if not if_trained_flg:
-            logger.debug('start training tokenizer: %s' % tokenizer)
-            tokenizer.train(output_files, vocab_size=30000)
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir, exist_ok=True)
-            tokenizer.save(save_dir, name)
-            logger.debug('saved tokenizer at %s' % save_dir)
-        else:
-            logger.debug('load trained tokenizer')
-
-        # test decoding
-        if debug:
-            with open(output_files[-1], 'r') as f:
-                for n, test in enumerate(f.read().split('<eos>')):
-                    encoded = tokenizer.encode(test)
-                    logger.debug(' - sample %i \n    * %s \n     * %s' % (n, test, str(encoded.tokens)))
-                    if n > 10:
-                        break
-
-        # tokenize full corpus
-        def convert_file(__file_path):
-            logger.debug(' - converting file %s' % __file_path)
-            with open(__file_path, 'r') as _f:
-                token_ids = ' '.join([str(i) for i in tokenizer.encode(_f.read()).ids])
-            __file_path = os.path.join(save_dir, __file_path.split('/')[-1]).replace('.txt', '.id.txt')
-            with open(__file_path, 'w') as _f:
-                _f.write(token_ids)
-            logger.debug(' - saved at %s' % __file_path)
-            return __file_path
-
-        logger.info('tokenize corpus')
-        save_dir = os.path.join(data_path, tokenizer)
+    save_dir = os.path.join(vocab_directory, tokenizer_name)
+    tokenizer, if_trained_flg = get_tokenizer(tokenizer_name, checkpoint_dir=save_dir, checkpoint_name=name)
+    if not if_trained_flg:
+        logger.debug('start training tokenizer: %s' % tokenizer_name)
+        tokenizer.train(output_files, vocab_size=30000)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
-        return [convert_file(_file) for _file in output_files]
+        tokenizer.save(save_dir, name)
+        logger.debug('saved tokenizer at %s' % save_dir)
+    else:
+        logger.debug('load trained tokenizer')
+
+    # test decoding
+    if debug:
+        with open(output_files[-1], 'r') as f:
+            for n, test in enumerate(f.read().split('<eos>')):
+                encoded = tokenizer.encode(test)
+                logger.debug(' - sample %i \n    * %s \n     * %s' % (n, test, str(encoded.tokens)))
+                if n > 10:
+                    break
+
+    # tokenize full corpus
+    def convert_file(__file_path):
+        logger.debug(' - converting file %s' % __file_path)
+        with open(__file_path, 'r') as _f:
+            token_ids = ' '.join([str(i) for i in tokenizer.encode(_f.read()).ids])
+        __file_path = os.path.join(save_dir, __file_path.split('/')[-1]).replace('.txt', '.id.txt')
+        with open(__file_path, 'w') as _f:
+            _f.write(token_ids)
+        logger.debug(' - saved at %s' % __file_path)
+        return __file_path
+
+    logger.info('tokenize corpus')
+    save_dir = os.path.join(data_path, tokenizer_name)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=True)
+    return [convert_file(_file) for _file in output_files]
 
 
 class BatchFeeder:
@@ -180,10 +157,8 @@ class BatchFeeder:
         self._index = 0
         self.batch_size = batch_size
         self.num_steps = num_steps
-        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        seq = torch.tensor(sequence, dtype=torch.long, device=device)
+        seq = torch.tensor(sequence, dtype=torch.long)
         self.data_size = seq.size(0)
-
         n_batch = self.data_size // self.batch_size
         # Trim off any extra elements that wouldn't cleanly fit (remainders).
         seq = seq.narrow(0, 0, n_batch * self.batch_size)
@@ -210,3 +185,18 @@ class BatchFeeder:
         y = self._data[:, self._index * self.num_steps + 1:(self._index + 1) * self.num_steps + 1].contiguous()
         self._index += 1
         return x, y
+
+
+def get_options():
+    parser = argparse.ArgumentParser(description='Train tokenizer', formatter_class=argparse.RawTextHelpFormatter)
+    _p = {'nargs': '?', 'action': 'store', 'const': None, 'choices': None, 'metavar': None}
+    parser.add_argument('-t', '--tokenizer', help='tokenizer', default='SentencePieceBPETokenizer', type=str, **_p)
+    parser.add_argument('-d', '--data', help='data', default='PennTreebank', type=str, **_p)
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    # Test
+    arguments = get_options()
+    file_paths = get_data(arguments.data, arguments.tokenizer)
+
