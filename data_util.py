@@ -4,8 +4,9 @@ import torch
 import torchtext
 import tokenizers
 import argparse
+import zipfile
 from util import create_log
-from base_tokenizer import WhitespaceTokenizer, CharTokenizer
+from base_tokenizer import WhitespaceTokenizer
 
 
 __all__ = [
@@ -13,6 +14,31 @@ __all__ = [
     "get_tokenizer",
     "BatchFeeder"
 ]
+
+
+def enwiki8_dataset(data_dir, num_test_chars: int = 5000000):
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir, exist_ok=True)
+
+    output_list = \
+        [os.path.join(data_dir, 'train.txt'), os.path.join(data_dir, 'valid.txt'), os.path.join(data_dir, 'test.txt')]
+    if os.path.exists(os.path.join(data_dir, 'train.txt')) and \
+        os.path.exists(os.path.join(data_dir, 'valid.txt')) and \
+            os.path.exists(os.path.join(data_dir, 'test.txt')):
+        return output_list
+
+    os.system("wget --continue http://mattmahoney.net/dc/enwik8.zip")
+    os.system("mv ./enwik8.zip %s/" % data_dir)
+    if not os.path.exists(os.path.join(data_dir, 'enwik8.zip')):
+        raise ValueError('download enwik8 failed, please download it from `http://mattmahoney.net/dc/enwik8.zip` '
+                         'and put it at `%s`' % os.path.join(data_dir, 'enwik8.zip'))
+    data = zipfile.ZipFile(os.path.join(data_dir, 'enwik8.zip')).read('enwik8')
+    train_data = data[: -2 * num_test_chars]
+    valid_data = data[-2 * num_test_chars: -num_test_chars]
+    test_data = data[-num_test_chars:]
+    for fn, part in [('train.txt', train_data), ('valid.txt', valid_data), ('test.txt', test_data)]:
+        open(os.path.join(data_dir, fn), 'w').write(' '.join([str(c) if c != ord('\n') else '\n' for c in part]))
+    return output_list
 
 
 def get_tokenizer(name: str, checkpoint_dir: str = None, checkpoint_name: str = None):
@@ -89,9 +115,10 @@ def get_data(name,
         torchtext.datasets.WikiText103.splits(data_field, root=data_directory)
         data_path = os.path.join(data_directory, 'wikitext-103/wikitext-103')
         output_files = [
-            convert_eos(os.path.join(data_path, _f)) for _f in ['wiki.train.txt', 'wiki.valid.txt', 'wiki.test.txt']]
-    # elif name == 'enwiki8':
-    #     pass
+            convert_eos(os.path.join(data_path, _f)) for _f in ['wiki.train.tokens', 'wiki.valid.tokens', 'wiki.test.tokens']]
+    elif name == 'enwiki8':
+        data_path = os.path.join(data_directory, 'enwik8')
+        output_files = enwiki8_dataset(data_dir=data_path)
     else:
         raise ValueError('unknown data %s' % name)
     logger.debug('data %s has been downloaded' % name)
