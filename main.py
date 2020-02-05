@@ -255,7 +255,8 @@ class LanguageModel:
             self.__writer.add_scalar('learning_rate', lr, self.__training_step)
 
             if self.__training_step % progress_interval == 0:
-                self.__logger.debug(' * (step %i) ppl: %.3f, lr: %0.6f' % (self.__training_step, perplexity, lr))
+                self.__logger.debug(' * (step %i) ppl: %.3f, ppl: %.3f, lr: %0.6f'
+                                    % (self.__training_step, perplexity, bpc, lr))
 
             self.__training_step += 1
         self.__epoch += 1
