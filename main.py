@@ -264,6 +264,8 @@ class LanguageModel:
         hidden_state = None
         for data in data_loader:
             inputs, outputs = data
+            if self.n_gpu > 0:
+                inputs, outputs = inputs.cuda(), outputs.cuda()
             (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
             logit = logit.view(-1, logit.size(-1))
             outputs = outputs.view(-1)
