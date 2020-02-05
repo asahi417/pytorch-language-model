@@ -172,11 +172,14 @@ class StackedLSTM(nn.Module):
         output = self.__decoding_layer(output)
         _, pred = torch.max(output, dim=-1)
         prob = torch.nn.functional.softmax(output, dim=1)
-        # (seq * batch, vocab) -> (batch, seq, vocab)
-        output = output.view(emb.size(1), emb.size(0), self.__vocab_size)
-        prob = prob.view(emb.size(1), emb.size(0), self.__vocab_size)
-        # (seq * batch, vocab) -> (batch, seq,)
-        pred = pred.view(emb.size(1), emb.size(0))
+        # (seq * batch, vocab) -> (seq, batch, vocab)
+        output = output.view(emb.size(0), emb.size(1), self.__vocab_size)
+        prob = prob.view(emb.size(0), emb.size(1), self.__vocab_size)
+        pred = pred.view(emb.size(0), emb.size(1))
+        # (seq, batch, vocab) -> (batch, seq, vocab)
+        output = output.permute(1, 0).contiguous()
+        prob = prob.permute(1, 0).contiguous()
+        pred = pred.permute(1, 0).contiguous()
         return (output, prob, pred), new_hidden
 
     def repackage_hidden(self, h):

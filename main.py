@@ -239,6 +239,7 @@ class LanguageModel:
                 nn.utils.clip_grad_norm_(self.__net.parameters(), self.__param('clip'))
             # optimize
             self.__optimizer.step()
+            self.__scheduler.step()
             # log
             full_loss += len(outputs) * tmp_loss.cpu().item()
             full_seq_length += len(outputs)
