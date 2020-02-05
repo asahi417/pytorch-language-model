@@ -149,11 +149,11 @@ class LanguageModel:
         """ evaluate model """
         with detect_anomaly():
             batch_param = dict(batch_size=self.__param('batch_size'), num_steps=self.__param('n_context'))
-            loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_valid, **batch_param))
-            self.__logger.debug('(val)  loss: %.5f, ppl: %.5f' % (loss, ppl))
+            loss, ppl, bpc = self.__epoch_valid(BatchFeeder(sequence=data_valid, **batch_param))
+            self.__logger.debug('(val)  loss: %.5f, ppl: %.5f, bpc: %.5f' % (loss, ppl, bpc))
             if data_test:
-                loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_test, **batch_param), is_test=True)
-                self.__logger.debug('(test) loss: %.5f, ppl: %.5f' % (loss, ppl))
+                loss, ppl, bpc = self.__epoch_valid(BatchFeeder(sequence=data_test, **batch_param), is_test=True)
+                self.__logger.debug('(test) loss: %.5f, ppl: %.5f, bpc: %.5f' % (loss, ppl, bpc))
 
     def train(self,
               data_train: list,
@@ -172,10 +172,11 @@ class LanguageModel:
         try:
             with detect_anomaly():
                 while True:
-                    loss, ppl = self.__epoch_train(loader_train, progress_interval=progress_interval)
-                    val_loss, val_ppl = self.__epoch_valid(loader_valid)
-                    self.__logger.debug('[epoch %i] (train) loss: %.3f, ppl: %.3f (valid) loss: %.3f, ppl: %.3f'
-                                        % (self.__epoch, loss, ppl, val_loss, val_ppl))
+                    loss, ppl, bpc = self.__epoch_train(loader_train, progress_interval=progress_interval)
+                    val_loss, val_ppl, val_bpc = self.__epoch_valid(loader_valid)
+                    self.__logger.debug(
+                        '[epoch %i] (train) loss: %.3f, ppl: %.3f, bpc: %.3f (valid) loss: %.3f, ppl: %.3f, bpc: %.3f'
+                        % (self.__epoch, loss, ppl, bpc, val_loss, val_ppl, val_bpc))
 
                     if self.__best_val_ppl is None or val_ppl < self.__best_val_ppl:
                         best_model_wts = copy.deepcopy(self.__net.state_dict())
@@ -185,8 +186,8 @@ class LanguageModel:
                     if self.__training_step > self.__param('total_steps'):
                         if data_test:
                             loader_test = BatchFeeder(sequence=data_test, **batch_param)
-                            loss, ppl = self.__epoch_valid(loader_test, is_test=True)
-                            self.__logger.debug('(test) loss: %.3f, ppl: %.3f' % (loss, ppl))
+                            loss, ppl, bpc = self.__epoch_valid(loader_test, is_test=True)
+                            self.__logger.debug('(test) loss: %.3f, ppl: %.3f, bpc: %.3f' % (loss, ppl, bpc))
                         break
 
         except KeyboardInterrupt:
@@ -214,6 +215,7 @@ class LanguageModel:
         """ single epoch process for training """
         self.__net.train()
         perplexity = None
+        bpc = None
         mean_loss = None
         full_seq_length = 0
         full_loss = 0
@@ -244,10 +246,12 @@ class LanguageModel:
             full_loss += len(outputs) * tmp_loss.cpu().item()
             full_seq_length += len(outputs)
             perplexity = np.exp(min(30, full_loss / full_seq_length))
+            bpc = min(30, full_loss / full_seq_length) / np.log(2)
             mean_loss = full_loss / full_seq_length
             lr = self.__optimizer.param_groups[0]['lr']
             self.__writer.add_scalar('train/loss', mean_loss, self.__training_step)
             self.__writer.add_scalar('train/perplexity', perplexity, self.__training_step)
+            self.__writer.add_scalar('train/bpc', bpc, self.__training_step)
             self.__writer.add_scalar('learning_rate', lr, self.__training_step)
 
             if self.__training_step % progress_interval == 0:
@@ -255,7 +259,7 @@ class LanguageModel:
 
             self.__training_step += 1
         self.__epoch += 1
-        return mean_loss, perplexity
+        return mean_loss, perplexity, bpc
 
     def __epoch_valid(self, data_loader, is_test: bool=False):
         """ validation/test """
@@ -274,10 +278,12 @@ class LanguageModel:
             full_seq_length += len(outputs)
         mean_loss = full_loss / full_seq_length
         perplexity = np.exp(min(30, full_loss / full_seq_length))
+        bpc = min(30, full_loss / full_seq_length) / np.log(2)
         if not is_test:
             self.__writer.add_scalar('valid/perplexity', perplexity, self.__epoch)
+            self.__writer.add_scalar('valid/bpc', bpc, self.__epoch)
             self.__writer.add_scalar('valid/loss', mean_loss, self.__epoch)
-        return mean_loss, perplexity
+        return mean_loss, perplexity, bpc
 
 
 def get_options():
