@@ -1,10 +1,10 @@
 vocab_size = 204
 
-batch_size = 80
+batch_size = 128
 embedding_dim = 400
 n_hidden_units = 1150
 n_layers = 3
-n_context = 70
+n_context = 100
 tie_weights = true
 init_range = 0.1
 
@@ -16,7 +16,7 @@ dropout_output = 0.4
 scheduler = 'constant'
 lr = 0.001
 weight_decay = 1.2e-6
-total_steps = 25000
+total_steps = 30000
 
 random_seed = 1234
 
