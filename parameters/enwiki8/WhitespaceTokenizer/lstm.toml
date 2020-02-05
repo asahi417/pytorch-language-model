@@ -16,7 +16,7 @@ dropout_output = 0.4
 scheduler = 'constant'
 lr = 0.001
 weight_decay = 1.2e-6
-total_steps = 30000
+total_steps = 300000
 
 random_seed = 1234
 
