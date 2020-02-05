@@ -177,8 +177,8 @@ class StackedLSTM(nn.Module):
         prob = prob.view(emb.size(0), emb.size(1), self.__vocab_size)
         pred = pred.view(emb.size(0), emb.size(1))
         # (seq, batch, vocab) -> (batch, seq, vocab)
-        output = output.permute(1, 0).contiguous()
-        prob = prob.permute(1, 0).contiguous()
+        output = output.permute(1, 0, 2).contiguous()
+        prob = prob.permute(1, 0, 2).contiguous()
         pred = pred.permute(1, 0).contiguous()
         return (output, prob, pred), new_hidden
 
