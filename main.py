@@ -5,10 +5,11 @@ import copy
 import random
 import torch
 import torch.nn as nn
+from torch.autograd import detect_anomaly
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from util import create_log, ParameterManager
-from util_data import BatchFeeder, get_data
+from util_data import BatchFeeder, get_data, VALID_DATA_LIST, VALID_TOKENIZER_LIST
 from util_hf_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
 
@@ -146,12 +147,13 @@ class LanguageModel:
 
     def evaluate(self, data_valid, data_test=None):
         """ evaluate model """
-        batch_param = dict(batch_size=self.__param('batch_size'), num_steps=self.__param('n_context'))
-        loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_valid, **batch_param))
-        self.__logger.debug('(val)  loss: %.5f, ppl: %.5f' % (loss, ppl))
-        if data_test:
-            loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_test, **batch_param), is_test=True)
-            self.__logger.debug('(test) loss: %.5f, ppl: %.5f' % (loss, ppl))
+        with detect_anomaly():
+            batch_param = dict(batch_size=self.__param('batch_size'), num_steps=self.__param('n_context'))
+            loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_valid, **batch_param))
+            self.__logger.debug('(val)  loss: %.5f, ppl: %.5f' % (loss, ppl))
+            if data_test:
+                loss, ppl = self.__epoch_valid(BatchFeeder(sequence=data_test, **batch_param), is_test=True)
+                self.__logger.debug('(test) loss: %.5f, ppl: %.5f' % (loss, ppl))
 
     def train(self,
               data_train: list,
@@ -168,26 +170,29 @@ class LanguageModel:
         loader_valid = BatchFeeder(sequence=data_valid, **batch_param)
 
         try:
-            while True:
-                loss, ppl = self.__epoch_train(loader_train, progress_interval=progress_interval)
-                val_loss, val_ppl = self.__epoch_valid(loader_valid)
-                self.__logger.debug('[epoch %i] (train) loss: %.3f, ppl: %.3f (valid) loss: %.3f, ppl: %.3f'
-                                    % (self.__epoch, loss, ppl, val_loss, val_ppl))
+            with detect_anomaly():
+                while True:
+                    loss, ppl = self.__epoch_train(loader_train, progress_interval=progress_interval)
+                    val_loss, val_ppl = self.__epoch_valid(loader_valid)
+                    self.__logger.debug('[epoch %i] (train) loss: %.3f, ppl: %.3f (valid) loss: %.3f, ppl: %.3f'
+                                        % (self.__epoch, loss, ppl, val_loss, val_ppl))
 
-                if self.__best_val_ppl is None or val_ppl < self.__best_val_ppl:
-                    best_model_wts = copy.deepcopy(self.__net.state_dict())
-                    self.__best_epoch = self.__epoch
-                    self.__best_val_ppl = val_ppl
+                    if self.__best_val_ppl is None or val_ppl < self.__best_val_ppl:
+                        best_model_wts = copy.deepcopy(self.__net.state_dict())
+                        self.__best_epoch = self.__epoch
+                        self.__best_val_ppl = val_ppl
 
-                if self.__training_step > self.__param('total_steps'):
-                    if data_test:
-                        loader_test = BatchFeeder(sequence=data_test, **batch_param)
-                        loss, ppl = self.__epoch_valid(loader_test, is_test=True)
-                        self.__logger.debug('(test) loss: %.3f, ppl: %.3f' % (loss, ppl))
-                    break
+                    if self.__training_step > self.__param('total_steps'):
+                        if data_test:
+                            loader_test = BatchFeeder(sequence=data_test, **batch_param)
+                            loss, ppl = self.__epoch_valid(loader_test, is_test=True)
+                            self.__logger.debug('(test) loss: %.3f, ppl: %.3f' % (loss, ppl))
+                        break
 
         except KeyboardInterrupt:
             self.__logger.info('*** KeyboardInterrupt ***')
+            if self.__best_val_ppl is None:
+                exit('nothing to be saved')
 
         self.__logger.debug('[training completed] best model: valid ppt %0.3f at epoch %i'
                             % (self.__best_val_ppl, self.__best_epoch))
@@ -277,20 +282,23 @@ def get_options():
     _p = {'nargs': '?', 'action': 'store', 'const': None, 'choices': None, 'metavar': None}
     parser.add_argument('-c', '--ckpt', help='pre-trained model ckpt', default=None, type=str, **_p)
     parser.add_argument('-e', '--evaluate', help='evaluation', action='store_true')
-    parser.add_argument('-d', '--data', help='dataset', default='PennTreebank', type=str, **_p)
-    parser.add_argument('-t', '--tokenizer', help='tokenizer', default='SentencePieceBPETokenizer', type=str, **_p)
+    parser.add_argument('-d', '--data', help='data: %s' % str(VALID_DATA_LIST), default='PennTreebank', type=str, **_p)
+    parser.add_argument('-t', '--tokenizer', help='tokenizer: %s' % str(VALID_TOKENIZER_LIST), default='SentencePieceBPETokenizer', type=str, **_p)
     parser.add_argument('-m', '--model', help='model', default='lstm', type=str, **_p)
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     arguments = get_options()
-    _data_train, _data_valid, _data_test = get_data(arguments.data, arguments.tokenizer)
+    # vocab size can be applied for tokenizer except Whitespace
+    _data_train, _data_valid, _data_test = get_data(arguments.data, arguments.tokenizer, vocab_size=10000)
+
+    config_path = os.path.join(arguments.data, arguments.tokenizer, arguments.model)
 
     model_instance = LanguageModel(
         checkpoint=arguments.ckpt,
-        checkpoint_dir='./ckpt/%s/%s/%s' % (arguments.data, arguments.tokenizer, arguments.model),
-        default_parameter='./parameters/%s.toml' % arguments.model)
+        checkpoint_dir=os.path.join('./ckpt', config_path),
+        default_parameter=os.path.join('./parameters', config_path) + '.toml')
 
     if arguments.evaluate:
         model_instance.evaluate(data_valid=_data_valid, data_test=_data_test)

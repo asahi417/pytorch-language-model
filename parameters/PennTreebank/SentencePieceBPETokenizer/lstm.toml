@@ -1,5 +1,6 @@
+vocab_size = 10000
+
 batch_size = 80
-vocab_size = 15432
 embedding_dim = 400
 n_hidden_units = 1150
 n_layers = 3

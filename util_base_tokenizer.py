@@ -25,7 +25,7 @@ class WhitespaceTokenizer:
         else:
             self.__vocab = dict()
 
-    def train(self, file_path_list: list, vocab_size: int=50000):
+    def train(self, file_path_list: list, **kwargs):
         tokens = []
         for file_path in file_path_list:
             with open(file_path, 'r') as f:
@@ -33,8 +33,8 @@ class WhitespaceTokenizer:
         for t in tokens:
             if len(t) == 0:
                 continue
-            if len(self.__vocab.keys()) > vocab_size:
-                break
+            # if len(self.__vocab.keys()) > vocab_size:
+            #     break
             if t not in self.__vocab.keys():
                 self.__vocab[t] = len(self.__vocab.keys())
 

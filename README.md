@@ -16,7 +16,7 @@ Train LSTM language model on PTB
 ```
 python main.py 
 ```
-Hyperparameter can be changed by editing [toml file](parameters/lstm.toml),
+Hyperparameter can be changed by editing [toml file](parameters/PennTreebank/SentencePieceBPETokenizer/lstm.toml),
 and here is a brief result with different learning rate settings.
 
 | Learning Rate | perplexity (valid) | epoch |

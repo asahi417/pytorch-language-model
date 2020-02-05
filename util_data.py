@@ -11,8 +11,15 @@ from util_base_tokenizer import WhitespaceTokenizer
 __all__ = [
     "get_data",
     "get_tokenizer",
-    "BatchFeeder"
+    "BatchFeeder",
+    "VALID_DATA_LIST",
+    "VALID_TOKENIZER_LIST"
 ]
+
+
+VALID_DATA_LIST = ['PennTreebank', 'WikiText103', 'enwiki8']
+VALID_TOKENIZER_LIST = ['BPETokenizer', 'ByteLevelBPETokenizer', 'SentencePieceBPETokenizer', 'BertWordPieceTokenizer',
+                        'WhitespaceTokenizer']
 
 
 def enwiki8_dataset(data_dir, num_test_chars: int = 5000000):
@@ -75,10 +82,9 @@ def get_data(name,
              tokenizer_name: str = 'SentencePieceBPETokenizer',
              data_directory: str = './data',
              vocab_directory: str = './vocab',
-             debug: bool = False):
+             debug: bool = False,
+             vocab_size: int = 30000):
     """ Get file path to tokenized benchmark data
-
-    TODO: Add enwiki8
 
      Parameter
     ------------
@@ -125,7 +131,10 @@ def get_data(name,
     tokenizer, if_trained_flg = get_tokenizer(tokenizer_name, checkpoint_dir=save_dir, checkpoint_name=name)
     if not if_trained_flg:
         logger.debug('start training tokenizer: %s' % tokenizer_name)
-        tokenizer.train(output_files, vocab_size=30000)
+        if tokenizer_name == 'WhitespaceTokenizer':
+            tokenizer.train(output_files)
+        else:
+            tokenizer.train(output_files, vocab_size=vocab_size)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
         tokenizer.save(save_dir, name)
