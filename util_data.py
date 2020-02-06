@@ -82,7 +82,7 @@ def get_data(name,
              tokenizer_name: str = 'SentencePieceBPETokenizer',
              data_directory: str = './data',
              vocab_directory: str = './vocab',
-             debug: bool = False,
+             debug: bool = True,
              vocab_size: int = 30000):
     """ Get file path to tokenized benchmark data
 
@@ -167,7 +167,10 @@ def get_data(name,
     save_dir = os.path.join(data_path, tokenizer_name)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=True)
-    return [convert_file(_file) for _file in output_files]
+    output_files_ids = []
+    for _file in output_files:
+        output_files_ids.append(convert_file(_file))
+    return output_files_ids
 
 
 class BatchFeeder:

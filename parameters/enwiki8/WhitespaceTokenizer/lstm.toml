@@ -1,9 +1,9 @@
 vocab_size = 204
 
 batch_size = 128
-embedding_dim = 400
-n_hidden_units = 1150
-n_layers = 3
+embedding_dim = 200
+n_hidden_units = 700
+n_layers = 7
 n_context = 100
 tie_weights = true
 init_range = 0.1
@@ -20,4 +20,4 @@ total_steps = 300000
 
 random_seed = 1234
 
-clip = ''
+clip = 1
