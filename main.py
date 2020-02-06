@@ -72,13 +72,16 @@ class LanguageModel:
             self.__logger.debug('running on single GPU')
             self.__net = self.__net.cuda()
             self.n_gpu = 1
+            self.device = torch.device('cuda')
         elif torch.cuda.device_count() > 1:
             self.__logger.debug('running on %i GPUs' % torch.cuda.device_count())
             self.__net = torch.nn.DataParallel(self.__net.cuda())
             self.n_gpu = torch.cuda.device_count()
+            self.device = torch.device('cuda')
         else:
             self.__logger.debug('no GPUs found')
             self.n_gpu = 0
+            self.device = torch.device('cpu')
 
         # optimizer
         self.__optimizer = AdamW(
@@ -98,7 +101,7 @@ class LanguageModel:
 
         # load pre-trained ckpt
         if os.path.exists(self.__checkpoint_model):
-            ckpt = torch.load(self.__checkpoint_model)
+            ckpt = torch.load(self.__checkpoint_model, map_location=self.device)
             self.__net.load_state_dict(ckpt['model_state_dict'])
             self.__optimizer.load_state_dict(ckpt['optimizer_state_dict'])
             self.__scheduler.load_state_dict(ckpt['scheduler_state_dict'])
