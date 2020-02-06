@@ -82,7 +82,7 @@ def get_data(name,
              tokenizer_name: str = 'SentencePieceBPETokenizer',
              data_directory: str = './data',
              vocab_directory: str = './vocab',
-             debug: bool = True,
+             debug: bool = False,
              vocab_size: int = 30000):
     """ Get file path to tokenized benchmark data
 
