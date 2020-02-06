@@ -202,8 +202,9 @@ class LanguageModel:
 
         except KeyboardInterrupt:
             self.__logger.info('*** KeyboardInterrupt ***')
-            if self.__best_val_ppl is None:
-                exit('nothing to be saved')
+
+        if self.__best_val_ppl is None:
+            exit('nothing to be saved')
 
         self.__logger.debug('[training completed] best model: valid ppt %0.3f at epoch %i'
                             % (self.__best_val_ppl, self.__best_epoch))
