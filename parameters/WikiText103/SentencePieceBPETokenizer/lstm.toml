@@ -21,3 +21,5 @@ total_steps = 30000
 random_seed = 1234
 
 clip = ''
+
+optimizer = 'adamw'

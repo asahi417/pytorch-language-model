@@ -3,11 +3,12 @@ import argparse
 import os
 import copy
 import random
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.autograd import detect_anomaly
 from torch.utils.tensorboard import SummaryWriter
-import numpy as np
+from torch import optim
 from util import create_log, ParameterManager
 from util_data import BatchFeeder, get_data, VALID_DATA_LIST, VALID_TOKENIZER_LIST
 from util_hf_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
@@ -84,8 +85,14 @@ class LanguageModel:
             self.device = torch.device('cpu')
 
         # optimizer
-        self.__optimizer = AdamW(
-            self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
+        if self.__param("optimizer") == 'adamw':
+            self.__optimizer = AdamW(
+               self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
+        elif self.__param("optimizer") == 'sgd':
+            self.__optimizer = optim.SGD(
+                self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
+        else:
+            raise ValueError('bad optimizer: %s' % self.__param("optimizer"))
         if self.__param('scheduler') == 'constant':
             self.__scheduler = get_constant_schedule(self.__optimizer)
         elif self.__param('scheduler') == 'linear':

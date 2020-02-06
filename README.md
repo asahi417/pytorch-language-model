@@ -14,6 +14,6 @@ pip install -r requirement.txt
 
 - PennTreebank
 
-| model | tokenizer      |  perplexity (valid) | perplexity (valid) | parameter |
+| model | tokenizer      |  perplexity (valid) | perplexity (test)  | parameter |
 | ----- |:---------------|:-------------------:|:------------------:|:---------:|
-| LSTM  | SentencePieace | 88.49               |  88.49             | [toml file](./parameters/PennTreebank/SentencePieceBPETokenizer/lstm.toml)  | 
+| LSTM  | SentencePieace | 71.27               |  64.96             | [toml file](./parameters/PennTreebank/SentencePieceBPETokenizer/lstm.toml)  | 
