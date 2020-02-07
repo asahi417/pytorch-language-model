@@ -193,6 +193,7 @@ class LanguageModel:
                         self.__best_epoch = self.__epoch
                         self.__best_val_ppl = val_ppl
 
+                    # TODO: Fix as this cant stop till the epoch done
                     if self.__training_step > self.__param('total_steps'):
                         if data_test:
                             loader_test = BatchFeeder(sequence=data_test, **batch_param)

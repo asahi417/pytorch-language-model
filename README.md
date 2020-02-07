@@ -22,4 +22,10 @@ pip install -r requirement.txt
 
 | model | tokenizer      |  bpc (valid) | bpc (test)  | parameter |
 | ----- |:---------------|:------------:|:-----------:|:---------:|
-| LSTM  | Whitespace     | 1.73         |        | [toml file](./parameters/enwiki8/WhitespaceTokenizer/lstm.toml)  | 
+| LSTM  | Whitespace     | 1.72         | 1.71        | [toml file](./parameters/enwiki8/WhitespaceTokenizer/lstm.toml)  | 
+
+- WikiText103
+
+| model | tokenizer      |  perplexity (valid) | perplexity (test)  | parameter |
+| ----- |:---------------|:-------------------:|:------------------:|:---------:|
+| LSTM  | SentencePieace | 70.62               | 69.41              | [toml file](./parameters/WikiText103/SentencePieceBPETokenizer/lstm.toml)  | 
