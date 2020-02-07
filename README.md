@@ -29,3 +29,10 @@ pip install -r requirement.txt
 | model | tokenizer      |  perplexity (valid) | perplexity (test)  | parameter |
 | ----- |:---------------|:-------------------:|:------------------:|:---------:|
 | LSTM  | SentencePieace | 70.62               | 69.41              | [toml file](./parameters/WikiText103/SentencePieceBPETokenizer/lstm.toml)  | 
+
+## Forthcoming...
+- [ ] mixture precision (fp16 training) 
+- [ ] Async data batcher
+- [ ] Remove batch in validation
+- [ ] Regard `<eos>` as a special token in SentencePiece tokenizer
+  
