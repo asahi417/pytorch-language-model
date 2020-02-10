@@ -9,9 +9,23 @@ __all__ = [
     "PointwiseFeedForward",
     "SelfMaskedAttention",
     "TransformerBlock",
-    "TransformerDecoder",
-    "GPT2"
+    "TransformerDecoder"
 ]
+
+
+class PositionalEmbedding(nn.Module):
+    def __init__(self, n_emb):
+        super().__init__()
+        self.register_buffer('inv_freq', 1 / (10000 ** (torch.arange(0.0, n_emb, 2.0) / n_emb)))
+
+    def forward(self, pos_seq, bsz=None):
+        sinusoid_inp = torch.ger(pos_seq, self.inv_freq)
+        pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
+
+        if bsz is not None:
+            return pos_emb[:, None, :].expand(-1, bsz, -1)
+        else:
+            return pos_emb[:, None, :]
 
 
 class Conv1D(nn.Module):
@@ -106,8 +120,7 @@ class SelfMaskedAttention(nn.Module):
                  n_head: int,
                  attention_dropout: float,
                  residual_dropout: float,
-                 n_context: int,
-                 max_cache_size: int=0):
+                 n_context: int):
         """ masked multi-heads self (causal) attention module with caching
 
          Parameter
@@ -121,18 +134,16 @@ class SelfMaskedAttention(nn.Module):
         """
         super().__init__()
         assert n_embedding % n_head == 0
-        self.__n_embedding = n_embedding
-        self.__n_head = n_head
-        self.__n_context = n_context
-        self.__max_cache_size = max_cache_size
-        self.linear_qkv = Conv1D(self.__n_embedding, self.__n_embedding * 3)  # 1d conv to get qkv once
-        self.linear_heads = Conv1D(self.__n_embedding, self.__n_embedding)  # 1d conv to get qkv once
+        self.linear_qkv = Conv1D(n_embedding, n_embedding * 3)  # 1d conv to get qkv once
+        self.linear_heads = Conv1D(n_embedding, n_embedding)  # 1d conv to get qkv once
         self.attention_dropout = nn.Dropout(attention_dropout)
         self.residual_dropout = nn.Dropout(residual_dropout)
         self.register_buffer(
-            'mask', torch.tensor(
-                [[int(r + max_cache_size <= c) for r in range(n_context + max_cache_size)] for c in range(n_context)],
-                dtype=torch.float))
+            'mask',
+            torch.tensor([[int(r <= c) for r in range(n_context)] for c in range(n_context)], dtype=torch.float))
+        self.__n_embedding = n_embedding
+        self.__n_head = n_head
+        self.__n_context = n_context
 
     def query_key_value(self, x, cached_key_value: list=None):
         """ get query/key/value vector for each head
@@ -173,7 +184,7 @@ class SelfMaskedAttention(nn.Module):
             k = torch.cat([cached_k, k], dim=3)
         return q, k, v
 
-    def masked_attention_weight(self, q, k, v):
+    def masked_attention_weight(self, q, k):
         """ causal mask attention weight by lower triangular mask
 
         [[1., 0., 0., 0., 0.],
@@ -186,7 +197,6 @@ class SelfMaskedAttention(nn.Module):
         -----------
         q: tensor (batch, self.__n_head, seq, dim / self.__n_head)
         k: tensor (batch, self.__n_head, dim / self.__n_head, seq + cached_seq)
-        v: tensor (batch, self.__n_head, seq + cached_seq, dim / self.__n_head)
 
          Return
         -----------
@@ -194,22 +204,26 @@ class SelfMaskedAttention(nn.Module):
             3rd axis is attended, and 4th is attending
         """
         att_weight = torch.matmul(q, k)
-
         batch, n_head, seq_attended, seq_attending = att_weight.size()
-        assert seq_attending >= seq_attended
-        assert n_head == self.__n_head
-        assert self.__n_context >= seq_attended
-        assert self.__n_context + self.__max_cache_size >= seq_attending
-        mask = self.mask[:seq_attended, :seq_attending]
-        att_weight = self.masked_softmax(att_weight / math.sqrt(v.size(-1)), mask, dim=-1)
-        att_weight = self.attention_dropout(att_weight)
-        return att_weight
+        cached_len = seq_attending - seq_attended
+        assert cached_len > 0
+        assert self.__n_context == seq_attended
+        assert self.__n_head == n_head
 
-    @staticmethod
-    def masked_softmax(vec, mask, dim=1, epsilon=1e-5):
+        # apply mask to trainable part
+        att_weight_no_cached = att_weight[:, :, :, cached_len:]
+        att_weight_no_cached = self.masked_softmax(att_weight_no_cached / math.sqrt(q.size(-1)), dim=-1)
+        att_weight_no_cached = self.attention_dropout(att_weight_no_cached)
+        # concat all the cached part
+        att_weight_cached = att_weight[:, :, :, :cached_len]
+        att_weight_full = torch.cat([att_weight_cached, att_weight_no_cached], dim=-1)
+
+        return att_weight_full
+
+    def masked_softmax(self, vec, dim=1, epsilon=1e-5):
         """ softmax ignoring zero value """
         exps = torch.exp(vec.float())
-        masked_exps = exps * mask.float()
+        masked_exps = exps * self.mask.float()
         masked_sums = masked_exps.sum(dim, keepdim=True) + epsilon
         return masked_exps / masked_sums
 
@@ -219,7 +233,8 @@ class SelfMaskedAttention(nn.Module):
          Parameter
         ------------
         x: tensor (batch, seq, dim), where the last row x[:, seq, :] is the newest token
-        cached_key_value: list of two tensors (batch, n_head, dim / n_head, cached_seq), [cached_key, cached_value]
+        cached_key_value: list of two tensors [cached_key, cached_value],
+            each has (batch, n_head, dim / n_head, cached_seq)
 
          Return
         ------------
@@ -229,7 +244,7 @@ class SelfMaskedAttention(nn.Module):
         """
         q, k, v = self.query_key_value(x, cached_key_value)
         # attention mask: batch, head, seq, seq + cache
-        att_weight = self.masked_attention_weight(q, k, v)
+        att_weight = self.masked_attention_weight(q, k)
         # batch, head, seq, dim/head
         context_vector = torch.matmul(att_weight, v)
         # batch, seq, dim/head, head
@@ -251,8 +266,7 @@ class TransformerBlock(nn.Module):
                  n_head: int,
                  residual_dropout: float,
                  attention_dropout: float,
-                 n_context: int,
-                 max_cache_size: int = 0):
+                 n_context: int):
         """ single Transformer Decoder Block
 
          Parameter
@@ -267,11 +281,14 @@ class TransformerBlock(nn.Module):
         attention_dropout: float
         """
         super().__init__()
-        self.layer_norm_1 = nn.LayerNorm(n_embedding)  # eps=1e-5
-        self.layer_norm_2 = nn.LayerNorm(n_embedding)  # eps=1e-5
+        self.layer_norm_1 = nn.LayerNorm(n_embedding)
+        self.layer_norm_2 = nn.LayerNorm(n_embedding)
         self.pointwise_ff = PointwiseFeedForward(n_embedding, n_state_ffn)
-        self.self_attention = SelfMaskedAttention(
-            n_embedding, n_head, attention_dropout, residual_dropout, n_context, max_cache_size)
+        self.self_attention = SelfMaskedAttention(n_embedding=n_embedding,
+                                                  n_head=n_head,
+                                                  attention_dropout=attention_dropout,
+                                                  residual_dropout=residual_dropout,
+                                                  n_context=n_context)
 
     def forward(self, x, cached_key_value: list=None):
         """ single transformer block
@@ -302,8 +319,7 @@ class TransformerDecoder(nn.Module):
                  n_head: int,
                  residual_dropout: float,
                  attention_dropout: float,
-                 n_context: int,
-                 max_cache_size: int=0):
+                 n_context: int):
         """ Transformer Decoder
 
          Parameter
@@ -323,15 +339,13 @@ class TransformerDecoder(nn.Module):
         """
         super().__init__()
         self.__n_layer = n_layer
-        self.__max_cache_size = max_cache_size
         self.transformer_stack = nn.ModuleList([
             TransformerBlock(n_embedding=n_embedding,
                              n_state_ffn=n_state_ffn,
                              n_head=n_head,
                              residual_dropout=residual_dropout,
                              attention_dropout=attention_dropout,
-                             n_context=n_context,
-                             max_cache_size=max_cache_size)
+                             n_context=n_context)
             for _ in range(self.__n_layer)
         ])
         self.layer_norm = nn.LayerNorm(n_embedding)  # eps=1e-5
@@ -368,152 +382,3 @@ class TransformerDecoder(nn.Module):
         x = self.layer_norm(x)
         return x, cached_key_value_new
 
-
-class GPT2(nn.Module):
-    """ GPT2: transformer-based Language Model """
-
-    def __init__(self,
-                 n_layer: int,
-                 n_embedding: int,
-                 n_state_ffn: int,
-                 n_head: int,
-                 n_context: int,
-                 max_cache_size: int,
-                 residual_dropout: float,
-                 attention_dropout: float,
-                 embedding_dropout: float,
-                 vocab_size: int,
-                 initializer_range: float=0.02):
-        """ GPT2: transformer-based Language Model
-
-         Parameter
-        -----------------
-        n_layer: int
-            number of layer
-        n_embedding: int
-            embedding dimension
-        n_state_ffn: int
-            intermediate state dimension
-        n_head: int
-            number of attention head
-        residual_dropout: float
-        attention_dropout: float
-        embedding_dropout: float
-        max_cache_size: int
-            max cache size for key/value
-        n_context: int
-            context length
-        vocab_size: int
-        initializer_range: float
-        """
-        super().__init__()
-
-        # word embedding/decoding and position embedding
-        self.word_embedding = nn.Embedding(vocab_size, n_embedding)
-        # nn.Embedding(a, b).weight.shape -> (a, b), while nn.Linear(a, b) -> (b, a)
-        self.word_decoding = nn.Linear(n_embedding, vocab_size, bias=False)
-        self.word_decoding.weight = self.word_embedding.weight
-        if max_cache_size:
-            assert max_cache_size >= 0
-        else:
-            max_cache_size = 0
-        # position ids/embedding
-        self.register_buffer(
-            'position_ids', torch.arange(0, n_context + max_cache_size, dtype=torch.long))
-        self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
-        self.embedding_dropout = nn.Dropout(embedding_dropout)
-        self.transformer_decoder = TransformerDecoder(
-            n_layer=n_layer,
-            n_embedding=n_embedding,
-            n_state_ffn=n_state_ffn,
-            n_head=n_head,
-            residual_dropout=residual_dropout,
-            attention_dropout=attention_dropout,
-            n_context=n_context,
-            max_cache_size=max_cache_size
-        )
-        self.__initializer_range = initializer_range
-        self.init_weight()
-
-    def __init_weight(self, _module):
-        self.initializer_range = 0.02
-        if isinstance(_module, (nn.Linear, nn.Embedding)):
-            _module.weight.data.normal_(mean=0.0, std=self.__initializer_range)
-            if isinstance(_module, nn.Linear) and _module.bias is not None:
-                _module.bias.data.zero_()
-        elif isinstance(_module, nn.LayerNorm):
-            _module.bias.data.zero_()
-            _module.weight.data.fill_(1.0)
-
-    def init_weight(self):
-        self.apply(self.__init_weight)
-
-    def forward(self, x, cached_key_value: list=None):
-        """ model output
-
-         Parameter
-        -------------
-        x: token id batch tensor (batch, sequence_length)
-        cached_key_value: cached key/value tensor
-
-         Return
-        -------------
-        (output, prob, pred):
-            output: raw output from Transformer decoder (sequence_length, batch, vocab size)
-            prob: softmax activated output (sequence_length, batch, vocab size)
-            pred: prediction (sequence_length, batch)
-        cached_key_value: new cached_key_value
-        """
-
-        if cached_key_value:
-            start_position_id = cached_key_value[0][1].size(-2)
-        else:
-            start_position_id = 0
-
-        # get embedding
-        w_embedding = self.word_embedding(x)  # dropout embeddings
-        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].unsqueeze(0)
-        p_embedding = self.position_embedding(position_ids)
-        embedding = self.embedding_dropout(p_embedding + w_embedding)
-
-        # transform
-        logit, cached_key_value = self.transformer_decoder(embedding, cached_key_value)
-
-        # get output
-        batch, seq, dim = logit.size()
-        logit = logit.view(batch * seq, dim)  # (batch, seq, dim) -> (batch * seq, dim)
-        output = self.word_decoding(logit).float()  # (batch * seq, dim) -> (batch * seq, vocab)
-
-        # get pred/prob
-        pred = torch.max(output, dim=1)[1].view(batch, seq)
-        prob = torch.nn.functional.softmax(output, dim=1).view(batch, seq, output.size(1))
-        output = output.view(batch, seq, output.size(1))
-        return (output, prob, pred), cached_key_value
-
-
-if __name__ == '__main__':
-    _batch, _seq, _dim = 10, 12, 100
-    sample = torch.ones((_batch, _seq), dtype=torch.long)
-    print('sample input:', sample.size())
-
-    gpt = GPT2(
-        n_layer=12,
-        n_embedding=_dim,
-        n_state_ffn=200,
-        n_head=int(_dim / 25),
-        n_context=_seq,
-        max_cache_size=_seq,
-        residual_dropout=.1,
-        attention_dropout=.1,
-        embedding_dropout=.1,
-        vocab_size=1000
-    )
-    (_output, _prob, _pred), kv = gpt(sample)
-    print('outputs:', _output.shape, _prob.shape, _pred.shape)
-    print(len(kv), len(kv[0]), kv[0][0].shape)
-    (_output, _prob, _pred), kv = gpt(sample)
-    print('outputs:', _output.shape, _prob.shape, _pred.shape)
-    print(len(kv), len(kv[0]), kv[0][0].shape)
-    (_output, _prob, _pred), kv = gpt(sample, kv)
-    print('outputs:', _output.shape, _prob.shape, _pred.shape)
-    print(len(kv), len(kv[0]), kv[0][0].shape)
