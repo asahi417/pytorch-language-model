@@ -221,13 +221,15 @@ class SelfMaskedAttention(nn.Module):
         assert self.n_head == n_head
         assert self.n_context == seq_attended
         if self.linear_position:
-            assert r_position_embedding and r_content_bias and r_position_bias and cached_len >= 0
+            assert r_position_embedding is not None
+            assert r_content_bias is not None
+            assert r_position_bias is not None
+            assert cached_len >= 0
             # attended, attending, n_pos_emb
-            rel_pos = torch.tensor(
-                [[r_position_embedding[int(max(0, c - r)), :].contiguous()
-                  for r in range(-cached_len, self.n_context)]
-                 for c in range(self.n_context)],
-                device=r_position_embedding.device, dtype=r_position_embedding.dtype)
+            rel_pos = torch.stack(
+                [torch.stack([r_position_embedding[int(max(0, c - r)), :].contiguous()
+                 for r in range(-cached_len, self.n_context)])
+                 for c in range(self.n_context)])
             # attended, attending, n_emb
             rel_pos = self.linear_position(rel_pos)
             _dim = int(self.n_embedding / self.n_head)
@@ -253,9 +255,9 @@ class SelfMaskedAttention(nn.Module):
             _r_content_bias = r_content_bias.view(1, self.n_head, 1, 1, 1, _dim)
             # batch, n_head, attended, attending
             att_weight_r_c = torch.matmul(_r_content_bias, rel_pos)
-            assert att_weight_r_c.size(-1) == 1 and att_weight_r_c.size(-2) == 1
+            assert att_weight_r_c.size(-1) == 1 and att_weight_r_c.size(-2) == 1 and att_weight_r_c.size(0) == 1
             att_weight_r_c = att_weight_r_c[:, :, :, :, 0, 0].contiguous()
-            assert att_weight.shape == att_weight_r_c.shape
+            assert att_weight.shape[1:4] == att_weight_r_c.shape[1:4]
 
             #######
             # (d) #
@@ -263,9 +265,9 @@ class SelfMaskedAttention(nn.Module):
             _r_position_bias = r_position_bias.view(1, self.n_head, 1, 1, 1, _dim)
             # batch, n_head, attended, attending
             att_weight_r_p = torch.matmul(_r_position_bias, rel_pos)
-            assert att_weight_r_p.size(-1) == 1 and att_weight_r_p.size(-2) == 1
+            assert att_weight_r_p.size(-1) == 1 and att_weight_r_p.size(-2) == 1 and att_weight_r_p.size(0) == 1
             att_weight_r_p = att_weight_r_p[:, :, :, :, 0, 0].contiguous()
-            assert att_weight.shape == att_weight_r_p.shape
+            assert att_weight.shape[1:4] == att_weight_r_p.shape[1:4]
 
             # get full attention
             att_weight = att_weight + att_weight_r + att_weight_r_c + att_weight_r_p
@@ -442,7 +444,7 @@ class TransformerDecoder(nn.Module):
             self.r_c_bias = nn.Parameter(torch.Tensor(n_head, int(n_embedding/n_head)))
             self.r_p_bias = nn.Parameter(torch.Tensor(n_head, int(n_embedding/n_head)))
         else:
-            self.r_r_bias = self.r_w_bias = self.pos_emb = None
+            self.r_c_bias = self.r_p_bias = self.pos_emb = None
         self.n_layer = n_layer
         self.n_context = n_context
 
@@ -459,9 +461,11 @@ class TransformerDecoder(nn.Module):
         x: tensor (batch, seq, dim)
         cached_key_value_new: new cached_key_value
         """
-        cached_length = cached_key_value[0][0].size(1) if cached_key_value else 0
+        cached_length = cached_key_value[0][0].size(-1) if cached_key_value is not None else 0
+        max_cache_length = min(cached_length, max_cache_length) if max_cache_length else cached_length
+
         if self.pos_emb:
-            pos_seq = torch.arange(self.n_context + cached_length, device=x.device, dtype=x.dtype)
+            pos_seq = torch.arange(self.n_context + max_cache_length, device=x.device, dtype=x.dtype)
             pos_emb = self.pos_emb(pos_seq)  # (1, seq + cached - 1, dim)
             pos_emb = self.input_dropout(pos_emb)
         else:
@@ -469,17 +473,17 @@ class TransformerDecoder(nn.Module):
             pos_emb = None
 
         if cached_length == 0:
-            cached_key_value = [None] * self.__n_layer
+            cached_key_value = [None] * self.n_layer
 
-        assert len(cached_key_value) == self.__n_layer
+        assert len(cached_key_value) == self.n_layer
         x = self.input_dropout(x)
         cached_key_value_new = []
         for transformer_block, cached_kv in zip(self.transformer_stack, cached_key_value):
 
             # limit cached context length
-            if cached_kv and max_cache_length and max_cache_length < cached_length:
+            if cached_kv is not None and max_cache_length < cached_length:
                 k, v = cached_kv
-                cached_kv = (k[:, :, :, -cached_length:].detach(), v[:, :, -cached_length:, :].detach())
+                cached_kv = (k[:, :, :, -max_cache_length:].detach(), v[:, :, -max_cache_length:, :].detach())
 
             x, (k, v) = transformer_block(x,
                                           cached_key_value=cached_kv,

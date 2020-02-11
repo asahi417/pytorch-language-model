@@ -22,7 +22,7 @@ class TransformerXL(nn.Module):
                  attention_dropout: float,
                  embedding_dropout: float,
                  vocab_size: int,
-                 # max_cache_size: int,
+                 n_positional_embedding:int,
                  initializer_range: float = 0.02):
         """ Transformer XL
 
@@ -51,10 +51,6 @@ class TransformerXL(nn.Module):
         # nn.Embedding(a, b).weight.shape -> (a, b), while nn.Linear(a, b) -> (b, a)
         self.word_decoding = nn.Linear(n_embedding, vocab_size, bias=False)
         self.word_decoding.weight = self.word_embedding.weight
-        # position ids/embedding
-        # self.register_buffer(
-        #     'position_ids', torch.arange(0, n_context + max_cache_size, dtype=torch.long))
-        # self.position_embedding = nn.Embedding(n_context + max_cache_size, n_embedding)
         self.embedding_dropout = nn.Dropout(embedding_dropout)
         self.transformer_decoder = TransformerDecoder(
             n_layer=n_layer,
@@ -63,7 +59,9 @@ class TransformerXL(nn.Module):
             n_head=n_head,
             residual_dropout=residual_dropout,
             attention_dropout=attention_dropout,
-            n_context=n_context
+            embedding_dropout=embedding_dropout,
+            n_context=n_context,
+            n_positional_embedding=n_positional_embedding
         )
         self.__initializer_range = initializer_range
         self.init_weight()
@@ -81,7 +79,7 @@ class TransformerXL(nn.Module):
     def init_weight(self):
         self.apply(self.__init_weight)
 
-    def forward(self, x, cached_key_value: list = None):
+    def forward(self, x, cached_key_value: list = None, max_cache_length: int=None):
         """ model output
 
          Parameter
@@ -98,19 +96,11 @@ class TransformerXL(nn.Module):
         cached_key_value: new cached_key_value
         """
 
-        if cached_key_value:
-            start_position_id = cached_key_value[0][1].size(-2)
-        else:
-            start_position_id = 0
-
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
-        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].unsqueeze(0)
-        p_embedding = self.position_embedding(position_ids)
-        embedding = self.embedding_dropout(p_embedding + w_embedding)
 
         # transform
-        logit, cached_key_value = self.transformer_decoder(embedding, cached_key_value)
+        logit, cached_key_value = self.transformer_decoder(w_embedding, cached_key_value, max_cache_length)
 
         # get output
         batch, seq, dim = logit.size()
@@ -122,4 +112,42 @@ class TransformerXL(nn.Module):
         prob = torch.nn.functional.softmax(output, dim=1).view(batch, seq, output.size(1))
         output = output.view(batch, seq, output.size(1))
         return (output, prob, pred), cached_key_value
+
+
+if __name__ == '__main__':
+    _batch, _seq, _dim = 10, 12, 100
+    sample = torch.ones((_batch, _seq), dtype=torch.long)
+    print('sample input:', sample.size())
+
+    gpt = TransformerXL(
+        n_layer=2,
+        n_embedding=_dim,
+        n_state_ffn=200,
+        n_head=int(_dim / 25),
+        n_context=_seq,
+        residual_dropout=.1,
+        attention_dropout=.1,
+        embedding_dropout=.1,
+        vocab_size=1000,
+        n_positional_embedding=10
+    )
+    print('\n * 1')
+    (_output, _prob, _pred), kv = gpt(sample)
+    print('outputs:', _output.shape, _prob.shape, _pred.shape)
+    print(len(kv), len(kv[0]), kv[0][0].shape)
+
+    print('\n * 2')
+    (_output, _prob, _pred), kv = gpt(sample)
+    print('outputs:', _output.shape, _prob.shape, _pred.shape)
+    print(len(kv), len(kv[0]), kv[0][0].shape)
+
+    print('\n * 3')
+    (_output, _prob, _pred), kv = gpt(sample, kv)
+    print('outputs:', _output.shape, _prob.shape, _pred.shape)
+    print(len(kv), len(kv[0]), kv[0][0].shape)
+
+    print('\n * 4')
+    (_output, _prob, _pred), kv = gpt(sample, kv, max_cache_length=2)
+    print('outputs:', _output.shape, _prob.shape, _pred.shape)
+    print(len(kv), len(kv[0]), kv[0][0].shape)
 

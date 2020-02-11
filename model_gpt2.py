@@ -47,13 +47,13 @@ class GPT2(nn.Module):
         # position ids/embedding
         self.register_buffer('position_ids', torch.arange(0, n_context, dtype=torch.long))
         self.position_embedding = nn.Embedding(n_context, n_embedding)
-        self.embedding_dropout = nn.Dropout(embedding_dropout)
         self.transformer_decoder = TransformerDecoder(n_layer=n_layer,
                                                       n_embedding=n_embedding,
                                                       n_state_ffn=n_state_ffn,
                                                       n_head=n_head,
                                                       residual_dropout=residual_dropout,
                                                       attention_dropout=attention_dropout,
+                                                      embedding_dropout=embedding_dropout,
                                                       n_context=n_context)
         self.__initializer_range = initializer_range
         self.init_weight()
@@ -71,7 +71,7 @@ class GPT2(nn.Module):
     def init_weight(self):
         self.apply(self.__init_weight)
 
-    def forward(self, x, cached_key_value: list=None):
+    def forward(self, x):
         """ model output
 
          Parameter
@@ -88,19 +88,16 @@ class GPT2(nn.Module):
         cached_key_value: new cached_key_value
         """
 
-        if cached_key_value:
-            start_position_id = cached_key_value[0][1].size(-2)
-        else:
-            start_position_id = 0
+        start_position_id = 0
 
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
         position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].unsqueeze(0)
         p_embedding = self.position_embedding(position_ids)
-        embedding = self.embedding_dropout(p_embedding + w_embedding)
+        embedding = p_embedding + w_embedding
 
         # transform
-        logit, cached_key_value = self.transformer_decoder(embedding, cached_key_value)
+        logit, _ = self.transformer_decoder(embedding)
 
         # get output
         batch, seq, dim = logit.size()
@@ -111,7 +108,7 @@ class GPT2(nn.Module):
         pred = torch.max(output, dim=1)[1].view(batch, seq)
         prob = torch.nn.functional.softmax(output, dim=1).view(batch, seq, output.size(1))
         output = output.view(batch, seq, output.size(1))
-        return (output, prob, pred), cached_key_value
+        return output, prob, pred
 
 
 if __name__ == '__main__':
@@ -130,12 +127,6 @@ if __name__ == '__main__':
         embedding_dropout=.1,
         vocab_size=1000
     )
-    (_output, _prob, _pred), kv = gpt(sample)
+    _output, _prob, _pred = gpt(sample)
     print('outputs:', _output.shape, _prob.shape, _pred.shape)
-    print(len(kv), len(kv[0]), kv[0][0].shape)
-    (_output, _prob, _pred), kv = gpt(sample)
-    print('outputs:', _output.shape, _prob.shape, _pred.shape)
-    print(len(kv), len(kv[0]), kv[0][0].shape)
-    (_output, _prob, _pred), kv = gpt(sample, kv)
-    print('outputs:', _output.shape, _prob.shape, _pred.shape)
-    print(len(kv), len(kv[0]), kv[0][0].shape)
+
