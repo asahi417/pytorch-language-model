@@ -1,10 +1,11 @@
-""" pytorch GPT 2 implementation """
+""" pytorch transformer decoder implementation """
 
 import math
 import torch
 import torch.nn as nn
 
 __all__ = [
+    "PositionalEmbedding",
     "Conv1D",
     "PointwiseFeedForward",
     "SelfMaskedAttention",
@@ -18,14 +19,17 @@ class PositionalEmbedding(nn.Module):
         super().__init__()
         self.register_buffer('inv_freq', 1 / (10000 ** (torch.arange(0.0, n_emb, 2.0) / n_emb)))
 
-    def forward(self, pos_seq, bsz=None):
+    def forward(self, pos_seq):
+        """ positional embedding
+
+         Parameter
+        -----------
+        pos_seq: 1-D tensor including sequence of relative position
+        """
+
         sinusoid_inp = torch.ger(pos_seq, self.inv_freq)
         pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
-
-        if bsz is not None:
-            return pos_emb[:, None, :].expand(-1, bsz, -1)
-        else:
-            return pos_emb[:, None, :]
+        return pos_emb
 
 
 class Conv1D(nn.Module):
@@ -120,7 +124,8 @@ class SelfMaskedAttention(nn.Module):
                  n_head: int,
                  attention_dropout: float,
                  residual_dropout: float,
-                 n_context: int):
+                 n_context: int,
+                 n_positional_embedding: int):
         """ masked multi-heads self (causal) attention module with caching
 
          Parameter
@@ -135,17 +140,21 @@ class SelfMaskedAttention(nn.Module):
         super().__init__()
         assert n_embedding % n_head == 0
         self.linear_qkv = Conv1D(n_embedding, n_embedding * 3)  # 1d conv to get qkv once
-        self.linear_heads = Conv1D(n_embedding, n_embedding)  # 1d conv to get qkv once
+        self.linear_heads = Conv1D(n_embedding, n_embedding)
         self.attention_dropout = nn.Dropout(attention_dropout)
         self.residual_dropout = nn.Dropout(residual_dropout)
         self.register_buffer(
             'mask',
             torch.tensor([[int(r <= c) for r in range(n_context)] for c in range(n_context)], dtype=torch.float))
-        self.__n_embedding = n_embedding
-        self.__n_head = n_head
-        self.__n_context = n_context
+        self.n_embedding = n_embedding
+        self.n_head = n_head
+        self.n_context = n_context
+        if n_positional_embedding:
+            self.linear_position = Conv1D(n_positional_embedding, n_embedding)
+        else:
+            self.linear_position = None
 
-    def query_key_value(self, x, cached_key_value: list=None):
+    def query_key_value(self, x, cached_key_value: list = None):
         """ get query/key/value vector for each head
 
          Parameter
@@ -153,25 +162,24 @@ class SelfMaskedAttention(nn.Module):
         x: tensor (batch, seq, dim)
         cached_key_value: list of two tensors (batch, n_head, dim / n_head, cached_seq), [cached_key, cached_value]
 
-
          Return
         ------------
-        q: tensor (batch, self.__n_head, seq, dim / self.__n_head)
-        v: tensor (batch, self.__n_head, seq + cached_seq, dim / self.__n_head)
-        k: tensor (batch, self.__n_head, dim / self.__n_head, seq + cached_seq)
+        q: tensor (batch, self.n_head, seq, dim / self.n_head)
+        v: tensor (batch, self.n_head, seq + cached_seq, dim / self.n_head)
+        k: tensor (batch, self.n_head, dim / self.n_head, seq + cached_seq)
 
             * `cached_seq` is zero if cached_key_value is None.
         """
 
         def __split_into_heads(tensor):
             n_batch, n_seq, n_dim = tensor.size()
-            assert n_dim == self.__n_embedding
-            tensor = tensor.view(n_batch, n_seq, self.__n_head, int(self.__n_embedding / self.__n_head))
+            assert n_dim == self.n_embedding
+            tensor = tensor.view(n_batch, n_seq, self.n_head, int(self.n_embedding / self.n_head))
             tensor = tensor.permute(0, 2, 1, 3).contiguous()
             return tensor
 
         qkv = self.linear_qkv(x)  # batch, seq, n_dim * 3
-        q, k, v = torch.split(qkv, self.__n_embedding, dim=-1)  # (batch, seq, n_dim) x 3
+        q, k, v = torch.split(qkv, self.n_embedding, dim=-1)  # (batch, seq, n_dim) x 3
         q = __split_into_heads(q)
         v = __split_into_heads(v)
         k = __split_into_heads(k)
@@ -184,7 +192,10 @@ class SelfMaskedAttention(nn.Module):
             k = torch.cat([cached_k, k], dim=3)
         return q, k, v
 
-    def masked_attention_weight(self, q, k):
+    def masked_attention_weight(self, q, k,
+                                r_position_embedding=None,
+                                r_content_bias=None,
+                                r_position_bias=None):
         """ causal mask attention weight by lower triangular mask
 
         [[1., 0., 0., 0., 0.],
@@ -195,8 +206,9 @@ class SelfMaskedAttention(nn.Module):
 
          Parameter
         -----------
-        q: tensor (batch, self.__n_head, seq, dim / self.__n_head)
-        k: tensor (batch, self.__n_head, dim / self.__n_head, seq + cached_seq)
+        q: tensor (batch, self.n_head, seq, dim / self.n_head)
+        k: tensor (batch, self.n_head, dim / self.n_head, seq + cached_seq)
+        r_position_embedding: tensor (seq + cached_seq, n_pos_dim)
 
          Return
         -----------
@@ -206,28 +218,86 @@ class SelfMaskedAttention(nn.Module):
         att_weight = torch.matmul(q, k)
         batch, n_head, seq_attended, seq_attending = att_weight.size()
         cached_len = seq_attending - seq_attended
-        assert cached_len > 0
-        assert self.__n_context == seq_attended
-        assert self.__n_head == n_head
+        assert self.n_head == n_head
+        assert self.n_context == seq_attended
+        if self.linear_position:
+            assert r_position_embedding and r_content_bias and r_position_bias and cached_len >= 0
+            # attended, attending, n_pos_emb
+            rel_pos = torch.tensor(
+                [[r_position_embedding[int(max(0, c - r)), :].contiguous()
+                  for r in range(-cached_len, self.n_context)]
+                 for c in range(self.n_context)],
+                device=r_position_embedding.device, dtype=r_position_embedding.dtype)
+            # attended, attending, n_emb
+            rel_pos = self.linear_position(rel_pos)
+            _dim = int(self.n_embedding / self.n_head)
+            # 1, attended, attending, n_head, n_emb/n_head, 1
+            rel_pos = rel_pos.view(1, self.n_context, seq_attending, self.n_head, _dim, 1)
+            # 1, n_head, attended, attending, n_emb/n_head, 1
+            rel_pos = rel_pos.permute(0, 3, 1, 2, 4, 5).contiguous()
 
-        # apply mask to trainable part
-        att_weight_no_cached = att_weight[:, :, :, cached_len:]
-        att_weight_no_cached = self.masked_softmax(att_weight_no_cached / math.sqrt(q.size(-1)), dim=-1)
-        att_weight_no_cached = self.attention_dropout(att_weight_no_cached)
-        # concat all the cached part
-        att_weight_cached = att_weight[:, :, :, :cached_len]
-        att_weight_full = torch.cat([att_weight_cached, att_weight_no_cached], dim=-1)
+            #######
+            # (b) #
+            #######
+            # batch, n_head, attended, 1, 1, dim / self.n_head)
+            _q = q.view(batch, self.n_head, self.n_context, 1, 1, _dim)
+            # batch, n_head, attended, attending
+            att_weight_r = torch.matmul(_q, rel_pos)
+            assert att_weight_r.size(-1) == 1 and att_weight_r.size(-2) == 1
+            att_weight_r = att_weight_r[:, :, :, :, 0, 0].contiguous()
+            assert att_weight.shape == att_weight_r.shape
 
-        return att_weight_full
+            #######
+            # (c) #
+            #######
+            _r_content_bias = r_content_bias.view(1, self.n_head, 1, 1, 1, _dim)
+            # batch, n_head, attended, attending
+            att_weight_r_c = torch.matmul(_r_content_bias, rel_pos)
+            assert att_weight_r_c.size(-1) == 1 and att_weight_r_c.size(-2) == 1
+            att_weight_r_c = att_weight_r_c[:, :, :, :, 0, 0].contiguous()
+            assert att_weight.shape == att_weight_r_c.shape
 
-    def masked_softmax(self, vec, dim=1, epsilon=1e-5):
+            #######
+            # (d) #
+            #######
+            _r_position_bias = r_position_bias.view(1, self.n_head, 1, 1, 1, _dim)
+            # batch, n_head, attended, attending
+            att_weight_r_p = torch.matmul(_r_position_bias, rel_pos)
+            assert att_weight_r_p.size(-1) == 1 and att_weight_r_p.size(-2) == 1
+            att_weight_r_p = att_weight_r_p[:, :, :, :, 0, 0].contiguous()
+            assert att_weight.shape == att_weight_r_p.shape
+
+            # get full attention
+            att_weight = att_weight + att_weight_r + att_weight_r_c + att_weight_r_p
+
+            # create mask for causal attention
+            if cached_len == 0:
+                mask = self.mask
+            else:
+                sub_mask = torch.ones((self.n_context, cached_len), device=self.mask.device, dtype=self.mask.dtype)
+                mask = torch.cat([sub_mask, self.mask], dim=1)
+        else:
+            assert self.n_context == seq_attending and cached_len == 0
+            mask = self.mask
+
+        att_weight = self.masked_softmax(att_weight / math.sqrt(q.size(-1)), mask=mask, dim=-1)
+        att_weight = self.attention_dropout(att_weight)
+        return att_weight
+
+    @staticmethod
+    def masked_softmax(vec, mask, dim=1, epsilon=1e-5):
         """ softmax ignoring zero value """
         exps = torch.exp(vec.float())
-        masked_exps = exps * self.mask.float()
+        masked_exps = exps * mask.float()
         masked_sums = masked_exps.sum(dim, keepdim=True) + epsilon
         return masked_exps / masked_sums
 
-    def forward(self, x, cached_key_value: list=None):
+    def forward(self,
+                x,
+                cached_key_value: list=None,
+                r_position_embedding=None,
+                r_content_bias=None,
+                r_position_bias=None):
         """ get attended context vector
 
          Parameter
@@ -235,6 +305,7 @@ class SelfMaskedAttention(nn.Module):
         x: tensor (batch, seq, dim), where the last row x[:, seq, :] is the newest token
         cached_key_value: list of two tensors [cached_key, cached_value],
             each has (batch, n_head, dim / n_head, cached_seq)
+        pos_emb: tensor (1, seq + cached_seq, n_pos_dim)
 
          Return
         ------------
@@ -244,7 +315,7 @@ class SelfMaskedAttention(nn.Module):
         """
         q, k, v = self.query_key_value(x, cached_key_value)
         # attention mask: batch, head, seq, seq + cache
-        att_weight = self.masked_attention_weight(q, k)
+        att_weight = self.masked_attention_weight(q, k, r_position_embedding, r_content_bias, r_position_bias)
         # batch, head, seq, dim/head
         context_vector = torch.matmul(att_weight, v)
         # batch, seq, dim/head, head
@@ -266,7 +337,8 @@ class TransformerBlock(nn.Module):
                  n_head: int,
                  residual_dropout: float,
                  attention_dropout: float,
-                 n_context: int):
+                 n_context: int,
+                 n_positional_embedding: int=None):
         """ single Transformer Decoder Block
 
          Parameter
@@ -288,9 +360,15 @@ class TransformerBlock(nn.Module):
                                                   n_head=n_head,
                                                   attention_dropout=attention_dropout,
                                                   residual_dropout=residual_dropout,
-                                                  n_context=n_context)
+                                                  n_context=n_context,
+                                                  n_positional_embedding=n_positional_embedding)
 
-    def forward(self, x, cached_key_value: list=None):
+    def forward(self,
+                x,
+                cached_key_value: list = None,
+                r_position_embedding=None,
+                r_content_bias=None,
+                r_position_bias=None):
         """ single transformer block
 
          Parameter
@@ -304,22 +382,28 @@ class TransformerBlock(nn.Module):
         (k, v): `key` tensor (batch, head, dim/head, seq + cache_size) and
                 `value` tensor (batch, head, seq + cache_size, dim/head)
         """
-        c, (k, v) = self.self_attention(self.layer_norm_1(x), cached_key_value=cached_key_value)
+        c, (k, v) = self.self_attention(self.layer_norm_1(x),
+                                        cached_key_value=cached_key_value,
+                                        r_position_embedding=r_position_embedding,
+                                        r_content_bias=r_content_bias,
+                                        r_position_bias=r_position_bias)
         output = x + self.pointwise_ff(self.layer_norm_2(x + c))
         return output, (k, v)
 
 
 class TransformerDecoder(nn.Module):
-    """ Transformer Decoder in GPT2 """
+    """ Transformer Decoder """
 
     def __init__(self,
                  n_layer: int,
                  n_embedding: int,
                  n_state_ffn: int,
                  n_head: int,
+                 embedding_dropout: float,
                  residual_dropout: float,
                  attention_dropout: float,
-                 n_context: int):
+                 n_context: int,
+                 n_positional_embedding: int = None):
         """ Transformer Decoder
 
          Parameter
@@ -336,21 +420,33 @@ class TransformerDecoder(nn.Module):
         attention_dropout: float
         max_cache_size: int
             max cache size for key/value
+        n_positional_embedding: int
+            relative positional embedding dimension (no relative position encoding if None)
         """
         super().__init__()
-        self.__n_layer = n_layer
         self.transformer_stack = nn.ModuleList([
             TransformerBlock(n_embedding=n_embedding,
                              n_state_ffn=n_state_ffn,
                              n_head=n_head,
                              residual_dropout=residual_dropout,
                              attention_dropout=attention_dropout,
-                             n_context=n_context)
-            for _ in range(self.__n_layer)
+                             n_context=n_context,
+                             n_positional_embedding=n_positional_embedding)
+            for _ in range(n_layer)
         ])
+        self.input_dropout = nn.Dropout(embedding_dropout)
         self.layer_norm = nn.LayerNorm(n_embedding)  # eps=1e-5
+        assert n_embedding % n_head == 0
+        if n_positional_embedding:
+            self.pos_emb = PositionalEmbedding(n_positional_embedding)
+            self.r_c_bias = nn.Parameter(torch.Tensor(n_head, int(n_embedding/n_head)))
+            self.r_p_bias = nn.Parameter(torch.Tensor(n_head, int(n_embedding/n_head)))
+        else:
+            self.r_r_bias = self.r_w_bias = self.pos_emb = None
+        self.n_layer = n_layer
+        self.n_context = n_context
 
-    def forward(self, x, cached_key_value: list=None):
+    def forward(self, x, cached_key_value: list=None, max_cache_length: int=None):
         """ transformer decoder output
 
          Parameter
@@ -363,20 +459,33 @@ class TransformerDecoder(nn.Module):
         x: tensor (batch, seq, dim)
         cached_key_value_new: new cached_key_value
         """
-        if cached_key_value is None:
-            cached_key_value = [None] * self.__n_layer
+        cached_length = cached_key_value[0][0].size(1) if cached_key_value else 0
+        if self.pos_emb:
+            pos_seq = torch.arange(self.n_context + cached_length, device=x.device, dtype=x.dtype)
+            pos_emb = self.pos_emb(pos_seq)  # (1, seq + cached - 1, dim)
+            pos_emb = self.input_dropout(pos_emb)
         else:
-            assert len(cached_key_value) == self.__n_layer
+            assert cached_length == 0
+            pos_emb = None
 
+        if cached_length == 0:
+            cached_key_value = [None] * self.__n_layer
+
+        assert len(cached_key_value) == self.__n_layer
+        x = self.input_dropout(x)
         cached_key_value_new = []
         for transformer_block, cached_kv in zip(self.transformer_stack, cached_key_value):
-            x, (k, v) = transformer_block(x, cached_kv)
-            # limit cached context length
-            if self.__max_cache_size:
-                cache_length = min(k.size(-1), self.__max_cache_size)
-                k = k[:, :, :,  -cache_length:].detach()
-                v = v[:, :, -cache_length:, :].detach()
 
+            # limit cached context length
+            if cached_kv and max_cache_length and max_cache_length < cached_length:
+                k, v = cached_kv
+                cached_kv = (k[:, :, :, -cached_length:].detach(), v[:, :, -cached_length:, :].detach())
+
+            x, (k, v) = transformer_block(x,
+                                          cached_key_value=cached_kv,
+                                          r_position_embedding=pos_emb,
+                                          r_content_bias=self.r_c_bias,
+                                          r_position_bias=self.r_p_bias)
             cached_key_value_new.append((k, v))
 
         x = self.layer_norm(x)
