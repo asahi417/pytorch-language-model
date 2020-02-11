@@ -1,10 +1,13 @@
+""" pytroch GPT2 """
 import torch
 from torch import nn
 from module_transformer import TransformerDecoder
 
+__all__ = ["GPT2"]
+
 
 class GPT2(nn.Module):
-    """ GPT2: transformer-based Language Model """
+    """ GPT2 """
 
     def __init__(self,
                  n_layer: int,

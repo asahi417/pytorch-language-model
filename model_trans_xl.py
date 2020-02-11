@@ -1,12 +1,9 @@
-""" pytorch TransformerXL implementation
-
-https://github.com/kimiyoung/transformer-xl/blob/master/pytorch/train.py#L436
-https://github.com/kimiyoung/transformer-xl/blob/master/pytorch/mem_transformer.py#L664
-"""
-
+""" pytorch TransformerXL """
 import torch
 import torch.nn as nn
 from module_transformer import TransformerDecoder
+
+__all__ = ["TransformerXL"]
 
 
 class TransformerXL(nn.Module):
