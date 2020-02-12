@@ -28,55 +28,55 @@ class LanguageModel:
         self.__logger.debug('initialize network: *** %s based language model ***' % model_type)
 
         # setup parameter
-        self.__param = ParameterManager(
+        self.param = ParameterManager(
             checkpoint=checkpoint,
             checkpoint_dir=checkpoint_dir,
             default_parameter=default_parameter,
             **kwargs)
-        self.__checkpoint_model = os.path.join(self.__param.checkpoint_dir, 'model.pt')
+        self.__checkpoint_model = os.path.join(self.param.checkpoint_dir, 'model.pt')
 
         # build network
         if model_type == 'lstm':
             from model_lstm import StackedLSTM
             self.__net = StackedLSTM(
-                dropout_word=self.__param("dropout_word"),
-                dropout_embedding=self.__param("dropout_embedding"),
-                dropout_intermediate=self.__param("dropout_intermediate"),
-                dropout_output=self.__param("dropout_output"),
-                vocab_size=self.__param("vocab_size"),
-                embedding_dim=self.__param("embedding_dim"),
-                n_layers=self.__param("n_layers"),
-                n_hidden_units=self.__param("n_hidden_units"),
-                n_context=self.__param("n_context"),
-                tie_weights=self.__param("tie_weights"),
-                init_range=self.__param("init_range")
+                dropout_word=self.param("dropout_word"),
+                dropout_embedding=self.param("dropout_embedding"),
+                dropout_intermediate=self.param("dropout_intermediate"),
+                dropout_output=self.param("dropout_output"),
+                vocab_size=self.param("vocab_size"),
+                embedding_dim=self.param("embedding_dim"),
+                n_layers=self.param("n_layers"),
+                n_hidden_units=self.param("n_hidden_units"),
+                n_context=self.param("n_context"),
+                tie_weights=self.param("tie_weights"),
+                init_range=self.param("init_range")
             )
         elif model_type == 'gpt2':
             from model_gpt2 import GPT2
             self.__net = GPT2(
-                n_layer=self.__param("n_layer"),
-                n_embedding=self.__param("n_embedding"),
-                n_state_ffn=self.__param("n_state_ffn"),
-                n_head=self.__param("n_head"),
-                n_context=self.__param("n_context"),
-                residual_dropout=self.__param("residual_dropout"),
-                attention_dropout=self.__param("attention_dropout"),
-                embedding_dropout=self.__param("embedding_dropout"),
-                vocab_size=self.__param("vocab_size")
+                n_layer=self.param("n_layer"),
+                n_embedding=self.param("n_embedding"),
+                n_state_ffn=self.param("n_state_ffn"),
+                n_head=self.param("n_head"),
+                n_context=self.param("n_context"),
+                residual_dropout=self.param("residual_dropout"),
+                attention_dropout=self.param("attention_dropout"),
+                embedding_dropout=self.param("embedding_dropout"),
+                vocab_size=self.param("vocab_size")
             )
         elif model_type == 'transformer_xl':
             from model_transformer_xl import TransformerXL
             self.__net = TransformerXL(
-                n_layer=self.__param("n_layer"),
-                n_embedding=self.__param("n_embedding"),
-                n_state_ffn=self.__param("n_state_ffn"),
-                n_head=self.__param("n_head"),
-                n_context=self.__param("n_context"),
-                residual_dropout=self.__param("residual_dropout"),
-                attention_dropout=self.__param("attention_dropout"),
-                embedding_dropout=self.__param("embedding_dropout"),
-                vocab_size=self.__param("vocab_size"),
-                n_positional_embedding = self.__param("n_positional_embedding")
+                n_layer=self.param("n_layer"),
+                n_embedding=self.param("n_embedding"),
+                n_state_ffn=self.param("n_state_ffn"),
+                n_head=self.param("n_head"),
+                n_context=self.param("n_context"),
+                residual_dropout=self.param("residual_dropout"),
+                attention_dropout=self.param("attention_dropout"),
+                embedding_dropout=self.param("embedding_dropout"),
+                vocab_size=self.param("vocab_size"),
+                n_positional_embedding=self.param("n_positional_embedding")
             )
         else:
             raise ValueError('bad model_type: %s' % model_type)
@@ -98,23 +98,29 @@ class LanguageModel:
             self.device = torch.device('cpu')
 
         # optimizer
-        if self.__param("optimizer") == 'adamw':
+        if self.param("optimizer") == 'adamw':
             self.__optimizer = AdamW(
-               self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
-        elif self.__param("optimizer") == 'sgd':
+               self.__net.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+        elif self.param("optimizer") == 'adam':
+            self.__optimizer = optim.Adam(
+                self.__net.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+        elif self.param("optimizer") == 'sgd':
             self.__optimizer = optim.SGD(
-                self.__net.parameters(), lr=self.__param('lr'), weight_decay=self.__param('weight_decay'))
+                self.__net.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
         else:
-            raise ValueError('bad optimizer: %s' % self.__param("optimizer"))
-        if self.__param('scheduler') == 'constant':
+            raise ValueError('bad optimizer: %s' % self.param("optimizer"))
+        if self.param('scheduler') == 'constant':
             self.__scheduler = get_constant_schedule(self.__optimizer)
-        elif self.__param('scheduler') == 'linear':
+        elif self.param('scheduler') == 'cosine':
+            self.__scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.__optimizer, self.param('total_steps'), eta_min=0)
+        elif self.param('scheduler') == 'linear':
             self.__scheduler = get_linear_schedule_with_warmup(
                 self.__optimizer,
-                num_warmup_steps=self.__param('warmup_steps'),
-                num_training_steps=self.__param('total_steps'))
+                num_warmup_steps=self.param('warmup_steps'),
+                num_training_steps=self.param('total_steps'))
         else:
-            raise ValueError('bad scheduler: %s' % self.__param('scheduler'))
+            raise ValueError('bad scheduler: %s' % self.param('scheduler'))
 
         # loss definition (CrossEntropyLoss includes softmax inside)
         self.__loss = nn.CrossEntropyLoss()
@@ -139,13 +145,13 @@ class LanguageModel:
             self.__best_val_ppl = None
 
         # log
-        self.__writer = SummaryWriter(log_dir=self.__param.checkpoint_dir)
-        self.__sanity_check(self.__param('random_seed'))
+        self.__writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
+        self.__sanity_check(self.param('random_seed'))
         self.__model_type = model_type
 
     @property
     def hyperparameters(self):
-        return self.__param
+        return self.param
 
     def __sanity_check(self, seed: int):
         """ sanity check as logging model size """
@@ -158,7 +164,7 @@ class LanguageModel:
                 self.__logger.debug(' - [weight size] %s: %s' % (name, str(__shape)))
         self.__logger.debug(' - %i variables in total' % model_size)
         self.__logger.debug('hyperparameters')
-        for k, v in self.__param.parameter.items():
+        for k, v in self.param.parameter.items():
             self.__logger.debug(' - [param] %s: %s' % (k, str(v)))
 
         # fix random seed
@@ -169,14 +175,17 @@ class LanguageModel:
             if self.n_gpu > 0:
                 torch.cuda.manual_seed_all(seed)
 
-    def evaluate(self, data_valid, data_test=None):
+    def evaluate(self, data_valid, data_test=None, n_extra_context: int = None):
         """ evaluate model """
 
         for d, n in zip([data_valid, data_test], ['valid', 'test']):
             if d is None:
                 continue
             loss, ppl, bpc = self.__epoch_valid(
-                BatchFeeder(sequence=d, batch_size=1, num_steps=self.__param('n_context')), is_test = True)
+                BatchFeeder(sequence=d, batch_size=1, num_steps=self.param('n_context')),
+                is_test=True,
+                n_extra_context=n_extra_context
+            )
             self.__logger.debug('(eval.%s) loss: %.5f, ppl: %.5f, bpc: %.5f' % (n, loss, ppl, bpc))
 
     def train(self,
@@ -189,7 +198,7 @@ class LanguageModel:
         val_ppl = None
 
         self.__logger.debug('initialize batch feeder')
-        batch_param = dict(batch_size=self.__param('batch_size'), num_steps=self.__param('n_context'))
+        batch_param = dict(batch_size=self.param('batch_size'), num_steps=self.param('n_context'))
         loader_train = BatchFeeder(sequence=data_train, **batch_param)
         loader_valid = BatchFeeder(sequence=data_valid, **batch_param)
 
@@ -208,7 +217,7 @@ class LanguageModel:
                         self.__best_val_ppl = val_ppl
 
                     # TODO: Fix as this cant stop till the epoch done
-                    if self.__training_step > self.__param('total_steps'):
+                    if self.__training_step > self.param('total_steps'):
                         if data_test:
                             loader_test = BatchFeeder(sequence=data_test, **batch_param)
                             loss, ppl, bpc = self.__epoch_valid(loader_test, is_test=True)
@@ -256,8 +265,10 @@ class LanguageModel:
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
-            if self.__model_type in ['lstm', 'transformer_xl']:
+            if self.__model_type == 'lstm':
                 (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+            elif self.__model_type == 'transformer_xl':
+                (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state, self.param('n_context_memory'))
             else:
                 logit, prob, pred = self.__net(inputs)
             # backward: calculate gradient
@@ -266,8 +277,8 @@ class LanguageModel:
             tmp_loss = self.__loss(logit, outputs)
             tmp_loss.backward()
             # gradient clip
-            if self.__param('clip') is not None:
-                nn.utils.clip_grad_norm_(self.__net.parameters(), self.__param('clip'))
+            if self.param('clip') is not None:
+                nn.utils.clip_grad_norm_(self.__net.parameters(), self.param('clip'))
             # optimize
             self.__optimizer.step()
             self.__scheduler.step()
@@ -291,7 +302,7 @@ class LanguageModel:
         self.__epoch += 1
         return mean_loss, perplexity, bpc
 
-    def __epoch_valid(self, data_loader, is_test: bool=False):
+    def __epoch_valid(self, data_loader, is_test: bool=False, n_extra_context: int = None):
         """ validation/test """
         self.__net.eval()
         full_seq_length = 0
@@ -301,7 +312,15 @@ class LanguageModel:
             inputs, outputs = data
             if self.n_gpu > 0:
                 inputs, outputs = inputs.cuda(), outputs.cuda()
-            (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+
+            if self.__model_type == 'lstm':
+                (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+            elif self.__model_type == 'transformer_xl':
+                (logit, prob, pred), hidden_state = self.__net(
+                    inputs, hidden_state, n_extra_context if n_extra_context else self.param('n_context_memory'))
+            else:
+                logit, prob, pred = self.__net(inputs)
+
             logit = logit.view(-1, logit.size(-1))
             outputs = outputs.view(-1)
             full_loss += len(outputs) * self.__loss(logit, outputs).cpu().item()
@@ -324,6 +343,7 @@ def get_options():
     parser.add_argument('-d', '--data', help='data: %s' % str(VALID_DATA_LIST), default='PennTreebank', type=str, **_p)
     parser.add_argument('-t', '--tokenizer', help='tokenizer: %s' % str(VALID_TOKENIZER_LIST), default='SentencePieceBPETokenizer', type=str, **_p)
     parser.add_argument('-m', '--model', help='model', default='lstm', type=str, **_p)
+    parser.add_argument('--n_extra_context', help='n_extra_context for transformer XL (eval mode)', default=None, type=int, **_p)
     return parser.parse_args()
 
 
@@ -340,7 +360,9 @@ if __name__ == '__main__':
         default_parameter=os.path.join('./parameters', config_path) + '.toml')
 
     if arguments.evaluate:
-        model_instance.evaluate(data_valid=_data_valid, data_test=_data_test)
+        model_instance.evaluate(data_valid=_data_valid,
+                                data_test=_data_test,
+                                n_extra_context=arguments.n_extra_context)
 
     else:
         model_instance.train(data_train=_data_train,

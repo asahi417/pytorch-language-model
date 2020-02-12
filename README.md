@@ -33,6 +33,9 @@ pip install -r requirement.txt
 ## Forthcoming...
 - [x] Remove batch in validation
 - [x] Regard `<eos>` as a special token in SentencePiece tokenizer
+- [ ] Configuration for Transformer XL (enwiki/Penn/Wikitext103)
+- [ ] Adaptive Softmax of transformer XL in WikiText103
+- [ ] [Adaptive Attention Span](https://arxiv.org/pdf/1905.07799.pdf)
 - [ ] mixture precision (fp16 training) 
 - [ ] Async data batcher
   
