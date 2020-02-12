@@ -1,4 +1,4 @@
-""" some basic tokenizer class """
+""" basic whitespace split tokenizer class """
 import os
 import json
 

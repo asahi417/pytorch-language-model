@@ -34,5 +34,5 @@ pip install -r requirement.txt
 - [ ] mixture precision (fp16 training) 
 - [ ] Async data batcher
 - [ ] Remove batch in validation
-- [ ] Regard `<eos>` as a special token in SentencePiece tokenizer
+- [x] Regard `<eos>` as a special token in SentencePiece tokenizer
   

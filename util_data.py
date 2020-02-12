@@ -4,6 +4,7 @@ import torch
 import torchtext
 import tokenizers
 import zipfile
+import argparse
 from util import create_log
 from util_base_tokenizer import WhitespaceTokenizer
 
@@ -82,6 +83,8 @@ def get_data(name,
              tokenizer_name: str = 'SentencePieceBPETokenizer',
              data_directory: str = './data',
              vocab_directory: str = './vocab',
+             eos_symbol: str = '<eos>',
+             special_symbols: list = None,
              debug: bool = False,
              vocab_size: int = 30000):
     """ Get file path to tokenized benchmark data
@@ -98,6 +101,12 @@ def get_data(name,
     list of token_id list (train/valid/test)
     """
     logger = create_log()
+    if special_symbols is not None:
+        special_tokens += eos_symbol
+    else:
+        special_tokens = [eos_symbol]
+    if '<unk>' not in special_tokens:
+        special_tokens += ['<unk>']
 
     # fetch benchmark data
     def convert_eos(__file_path):
@@ -105,7 +114,8 @@ def get_data(name,
         if not os.path.exists(__file_output):
             with open(__file_path, 'r') as _f_r:
                 with open(__file_output, 'w') as _f_w:
-                    _f_w.write(_f_r.read().replace('\n', '<eos>'))
+                    for line in _f_r:
+                        _f_w.write(' '.join(line.strip().split() + [eos_symbol]))
         return __file_output
 
     data_field = torchtext.data.Field(sequential=True)
@@ -126,7 +136,7 @@ def get_data(name,
         raise ValueError('unknown data %s' % name)
     logger.debug('data %s has been downloaded' % name)
 
-    # choose tokenizer
+    # train tokenizer
     save_dir = os.path.join(vocab_directory, tokenizer_name)
     tokenizer, if_trained_flg = get_tokenizer(tokenizer_name, checkpoint_dir=save_dir, checkpoint_name=name)
     if not if_trained_flg:
@@ -134,7 +144,7 @@ def get_data(name,
         if tokenizer_name == 'WhitespaceTokenizer':
             tokenizer.train(output_files)
         else:
-            tokenizer.train(output_files, vocab_size=vocab_size)
+            tokenizer.train(output_files, vocab_size=vocab_size, special_tokens=special_tokens)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
         tokenizer.save(save_dir, name)
@@ -144,12 +154,8 @@ def get_data(name,
 
     # test decoding
     if debug:
-        with open(output_files[-1], 'r') as f:
-            for n, test in enumerate(f.read().split('<eos>')):
-                encoded = tokenizer.encode(test)
-                logger.debug(' - sample %i \n    * %s \n     * %s' % (n, test, str(encoded.tokens)))
-                if n > 10:
-                    break
+        encoded = tokenizer.encode(open(output_files[-1], 'r').read()[:100])
+        logger.debug(' - sample decoding \n    * %s \n     * %s' % (test, str(encoded.tokens)))
 
     # tokenize full corpus
     def convert_file(__file_path):
@@ -223,3 +229,16 @@ class BatchFeeder:
         self._index += 1
         return x, y
 
+
+def get_options():
+    parser = argparse.ArgumentParser(description='Train language model', formatter_class=argparse.RawTextHelpFormatter)
+    _p = {'nargs': '?', 'action': 'store', 'const': None, 'choices': None, 'metavar': None}
+    parser.add_argument('-d', '--data', help='data: %s' % str(VALID_DATA_LIST), default='PennTreebank', type=str, **_p)
+    parser.add_argument('-t', '--tokenizer', help='tokenizer: %s' % str(VALID_TOKENIZER_LIST), default='SentencePieceBPETokenizer', type=str, **_p)
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    arguments = get_options()
+    # vocab size can be applied for tokenizer except Whitespace
+    get_data(arguments.data, arguments.tokenizer, vocab_size=10000)
