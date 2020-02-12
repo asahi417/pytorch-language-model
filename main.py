@@ -157,13 +157,13 @@ class LanguageModel:
 
     def evaluate(self, data_valid, data_test=None):
         """ evaluate model """
-        with detect_anomaly():
-            batch_param = dict(batch_size=self.__param('batch_size'), num_steps=self.__param('n_context'))
-            loss, ppl, bpc = self.__epoch_valid(BatchFeeder(sequence=data_valid, **batch_param))
-            self.__logger.debug('(val)  loss: %.5f, ppl: %.5f, bpc: %.5f' % (loss, ppl, bpc))
-            if data_test:
-                loss, ppl, bpc = self.__epoch_valid(BatchFeeder(sequence=data_test, **batch_param), is_test=True)
-                self.__logger.debug('(test) loss: %.5f, ppl: %.5f, bpc: %.5f' % (loss, ppl, bpc))
+
+        for d, n in zip([data_valid, data_test], ['valid', 'test']):
+            if d is None:
+                continue
+            loss, ppl, bpc = self.__epoch_valid(
+                BatchFeeder(sequence=d, batch_size=1, num_steps=self.__param('n_context')), is_test = True)
+            self.__logger.debug('(eval.%s) loss: %.5f, ppl: %.5f, bpc: %.5f' % (n, loss, ppl, bpc))
 
     def train(self,
               data_train: list,

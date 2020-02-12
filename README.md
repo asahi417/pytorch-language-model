@@ -31,8 +31,8 @@ pip install -r requirement.txt
 | LSTM  | SentencePieace | 70.62               | 69.41              | [toml file](./parameters/WikiText103/SentencePieceBPETokenizer/lstm.toml)  | 
 
 ## Forthcoming...
+- [x] Remove batch in validation
+- [x] Regard `<eos>` as a special token in SentencePiece tokenizer
 - [ ] mixture precision (fp16 training) 
 - [ ] Async data batcher
-- [ ] Remove batch in validation
-- [x] Regard `<eos>` as a special token in SentencePiece tokenizer
   
