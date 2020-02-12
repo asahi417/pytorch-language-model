@@ -37,7 +37,7 @@ class LanguageModel:
 
         # build network
         if model_type == 'lstm':
-            from module_lstm import StackedLSTM
+            from model_lstm import StackedLSTM
             self.__net = StackedLSTM(
                 dropout_word=self.__param("dropout_word"),
                 dropout_embedding=self.__param("dropout_embedding"),
@@ -52,18 +52,31 @@ class LanguageModel:
                 init_range=self.__param("init_range")
             )
         elif model_type == 'gpt2':
-            from module_transformer import GPT2
+            from model_gpt2 import GPT2
             self.__net = GPT2(
                 n_layer=self.__param("n_layer"),
                 n_embedding=self.__param("n_embedding"),
                 n_state_ffn=self.__param("n_state_ffn"),
                 n_head=self.__param("n_head"),
                 n_context=self.__param("n_context"),
-                max_cache_size=self.__param("max_cache_size"),
                 residual_dropout=self.__param("residual_dropout"),
                 attention_dropout=self.__param("attention_dropout"),
                 embedding_dropout=self.__param("embedding_dropout"),
                 vocab_size=self.__param("vocab_size")
+            )
+        elif model_type == 'transformer_xl':
+            from model_transformer_xl import TransformerXL
+            self.__net = TransformerXL(
+                n_layer=self.__param("n_layer"),
+                n_embedding=self.__param("n_embedding"),
+                n_state_ffn=self.__param("n_state_ffn"),
+                n_head=self.__param("n_head"),
+                n_context=self.__param("n_context"),
+                residual_dropout=self.__param("residual_dropout"),
+                attention_dropout=self.__param("attention_dropout"),
+                embedding_dropout=self.__param("embedding_dropout"),
+                vocab_size=self.__param("vocab_size"),
+                n_positional_embedding = self.__param("n_positional_embedding")
             )
         else:
             raise ValueError('bad model_type: %s' % model_type)
@@ -128,6 +141,7 @@ class LanguageModel:
         # log
         self.__writer = SummaryWriter(log_dir=self.__param.checkpoint_dir)
         self.__sanity_check(self.__param('random_seed'))
+        self.__model_type = model_type
 
     @property
     def hyperparameters(self):
@@ -242,7 +256,10 @@ class LanguageModel:
             # zero the parameter gradients
             self.__optimizer.zero_grad()
             # forward: output prediction and get loss
-            (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+            if self.__model_type in ['lstm', 'transformer_xl']:
+                (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+            else:
+                logit, prob, pred = self.__net(inputs)
             # backward: calculate gradient
             logit = logit.view(-1, logit.size(-1))
             outputs = outputs.view(-1)

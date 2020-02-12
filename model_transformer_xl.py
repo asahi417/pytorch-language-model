@@ -19,7 +19,7 @@ class TransformerXL(nn.Module):
                  attention_dropout: float,
                  embedding_dropout: float,
                  vocab_size: int,
-                 n_positional_embedding:int,
+                 n_positional_embedding: int,
                  initializer_range: float = 0.02):
         """ Transformer XL
 
