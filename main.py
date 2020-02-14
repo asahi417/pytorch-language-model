@@ -33,12 +33,12 @@ class LanguageModel:
             checkpoint_dir=checkpoint_dir,
             default_parameter=default_parameter,
             **kwargs)
-        self.__checkpoint_model = os.path.join(self.param.checkpoint_dir, 'model.pt')
+        self.checkpoint_model = os.path.join(self.param.checkpoint_dir, 'model.pt')
 
         # build network
         if model_type == 'lstm':
             from model_lstm import StackedLSTM
-            self.__net = StackedLSTM(
+            self.net = StackedLSTM(
                 dropout_word=self.param("dropout_word"),
                 dropout_embedding=self.param("dropout_embedding"),
                 dropout_intermediate=self.param("dropout_intermediate"),
@@ -53,7 +53,7 @@ class LanguageModel:
             )
         elif model_type == 'gpt2':
             from model_gpt2 import GPT2
-            self.__net = GPT2(
+            self.net = GPT2(
                 n_layer=self.param("n_layer"),
                 n_embedding=self.param("n_embedding"),
                 n_state_ffn=self.param("n_state_ffn"),
@@ -66,7 +66,7 @@ class LanguageModel:
             )
         elif model_type == 'transformer_xl':
             from model_transformer_xl import TransformerXL
-            self.__net = TransformerXL(
+            self.net = TransformerXL(
                 n_layer=self.param("n_layer"),
                 n_embedding=self.param("n_embedding"),
                 n_state_ffn=self.param("n_state_ffn"),
@@ -84,12 +84,12 @@ class LanguageModel:
         # GPU allocation
         if torch.cuda.device_count() == 1:
             self.__logger.debug('running on single GPU')
-            self.__net = self.__net.cuda()
+            self.net = self.net.cuda()
             self.n_gpu = 1
             self.device = torch.device('cuda')
         elif torch.cuda.device_count() > 1:
             self.__logger.debug('running on %i GPUs' % torch.cuda.device_count())
-            self.__net = torch.nn.DataParallel(self.__net.cuda())
+            self.net = torch.nn.DataParallel(self.net.cuda())
             self.n_gpu = torch.cuda.device_count()
             self.device = torch.device('cuda')
         else:
@@ -99,24 +99,24 @@ class LanguageModel:
 
         # optimizer
         if self.param("optimizer") == 'adamw':
-            self.__optimizer = AdamW(
-               self.__net.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+            self.optimizer = AdamW(
+               self.net.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
         elif self.param("optimizer") == 'adam':
-            self.__optimizer = optim.Adam(
-                self.__net.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+            self.optimizer = optim.Adam(
+                self.net.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
         elif self.param("optimizer") == 'sgd':
-            self.__optimizer = optim.SGD(
-                self.__net.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+            self.optimizer = optim.SGD(
+                self.net.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
         else:
             raise ValueError('bad optimizer: %s' % self.param("optimizer"))
         if self.param('scheduler') == 'constant':
-            self.__scheduler = get_constant_schedule(self.__optimizer)
+            self.scheduler = get_constant_schedule(self.optimizer)
         elif self.param('scheduler') == 'cosine':
-            self.__scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                self.__optimizer, self.param('total_steps'), eta_min=0)
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, self.param('total_steps'), eta_min=0)
         elif self.param('scheduler') == 'linear':
-            self.__scheduler = get_linear_schedule_with_warmup(
-                self.__optimizer,
+            self.scheduler = get_linear_schedule_with_warmup(
+                self.optimizer,
                 num_warmup_steps=self.param('warmup_steps'),
                 num_training_steps=self.param('total_steps'))
         else:
@@ -126,16 +126,16 @@ class LanguageModel:
         self.__loss = nn.CrossEntropyLoss()
 
         # load pre-trained ckpt
-        if os.path.exists(self.__checkpoint_model):
-            ckpt = torch.load(self.__checkpoint_model, map_location=self.device)
-            self.__net.load_state_dict(ckpt['model_state_dict'])
-            self.__optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            self.__scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+        if os.path.exists(self.checkpoint_model):
+            ckpt = torch.load(self.checkpoint_model, map_location=self.device)
+            self.net.load_state_dict(ckpt['model_state_dict'])
+            self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+            self.scheduler.load_state_dict(ckpt['scheduler_state_dict'])
             self.__training_step = ckpt['training_step']  # num of training step
             self.__epoch = ckpt['epoch']
             self.__best_epoch = ckpt['best_epoch']
             self.__best_val_ppl = ckpt['best_val_ppl']
-            self.__logger.debug('load ckpt from %s' % self.__checkpoint_model)
+            self.__logger.debug('load ckpt from %s' % self.checkpoint_model)
             self.__logger.debug(' - epoch (best): %s (%s) ' % (str(ckpt['epoch']), str(ckpt['best_epoch'])))
             self.__logger.debug(' - ppl (best)  : %s (%s) ' % (str(ckpt['val_ppl']), str(ckpt['best_val_ppl'])))
         else:
@@ -157,7 +157,7 @@ class LanguageModel:
         """ sanity check as logging model size """
         self.__logger.debug('trainable variables')
         model_size = 0
-        for name, param in self.__net.named_parameters():
+        for name, param in self.net.named_parameters():
             if param.requires_grad:
                 __shape = list(param.data.shape)
                 model_size += np.prod(__shape)
@@ -212,7 +212,7 @@ class LanguageModel:
                         % (self.__epoch, loss, ppl, bpc, val_loss, val_ppl, val_bpc))
 
                     if self.__best_val_ppl is None or val_ppl < self.__best_val_ppl:
-                        best_model_wts = copy.deepcopy(self.__net.state_dict())
+                        best_model_wts = copy.deepcopy(self.net.state_dict())
                         self.__best_epoch = self.__epoch
                         self.__best_val_ppl = val_ppl
 
@@ -233,22 +233,22 @@ class LanguageModel:
         self.__logger.debug('[training completed] best model: valid ppt %0.3f at epoch %i'
                             % (self.__best_val_ppl, self.__best_epoch))
         torch.save({
-            'model_state_dict': self.__net.state_dict(),
-            'optimizer_state_dict': self.__optimizer.state_dict(),
-            'scheduler_state_dict': self.__scheduler.state_dict(),
+            'model_state_dict': self.net.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
             'training_step': self.__training_step,
             'epoch': self.__epoch,
             'val_ppl': val_ppl,
             'best_epoch': self.__best_epoch,
             'best_val_ppl': self.__best_val_ppl,
             'best_model_state_dict': best_model_wts,
-        }, self.__checkpoint_model)
+        }, self.checkpoint_model)
         self.__writer.close()
-        self.__logger.info('ckpt saved at %s' % self.__checkpoint_model)
+        self.__logger.info('ckpt saved at %s' % self.checkpoint_model)
 
     def __epoch_train(self, data_loader, progress_interval: int = 100000):
         """ single epoch process for training """
-        self.__net.train()
+        self.net.train()
         perplexity = None
         bpc = None
         mean_loss = None
@@ -263,14 +263,17 @@ class LanguageModel:
             if self.n_gpu > 0:
                 inputs, outputs = inputs.cuda(), outputs.cuda()
             # zero the parameter gradients
-            self.__optimizer.zero_grad()
+            self.optimizer.zero_grad()
             # forward: output prediction and get loss
             if self.__model_type == 'lstm':
-                (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+                if self.param('pass_state'):
+                    (logit, prob, pred), hidden_state = self.net(inputs, hidden_state)
+                else:
+                    (logit, prob, pred), _ = self.net(inputs)
             elif self.__model_type == 'transformer_xl':
-                (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state, self.param('n_context_memory'))
+                (logit, prob, pred), hidden_state = self.net(inputs, hidden_state, self.param('n_context_memory'))
             else:
-                logit, prob, pred = self.__net(inputs)
+                logit, prob, pred = self.net(inputs)
             # backward: calculate gradient
             logit = logit.view(-1, logit.size(-1))
             outputs = outputs.view(-1)
@@ -278,17 +281,17 @@ class LanguageModel:
             tmp_loss.backward()
             # gradient clip
             if self.param('clip') is not None:
-                nn.utils.clip_grad_norm_(self.__net.parameters(), self.param('clip'))
+                nn.utils.clip_grad_norm_(self.net.parameters(), self.param('clip'))
             # optimize
-            self.__optimizer.step()
-            self.__scheduler.step()
+            self.optimizer.step()
+            self.scheduler.step()
             # log
             full_loss += len(outputs) * tmp_loss.cpu().item()
             full_seq_length += len(outputs)
             perplexity = np.exp(min(30, full_loss / full_seq_length))
             bpc = min(30, full_loss / full_seq_length) / np.log(2)
             mean_loss = full_loss / full_seq_length
-            lr = self.__optimizer.param_groups[0]['lr']
+            lr = self.optimizer.param_groups[0]['lr']
             self.__writer.add_scalar('train/loss', mean_loss, self.__training_step)
             self.__writer.add_scalar('train/perplexity', perplexity, self.__training_step)
             self.__writer.add_scalar('train/bpc', bpc, self.__training_step)
@@ -304,7 +307,7 @@ class LanguageModel:
 
     def __epoch_valid(self, data_loader, is_test: bool=False, n_extra_context: int = None):
         """ validation/test """
-        self.__net.eval()
+        self.net.eval()
         full_seq_length = 0
         full_loss = 0
         hidden_state = None
@@ -314,12 +317,12 @@ class LanguageModel:
                 inputs, outputs = inputs.cuda(), outputs.cuda()
 
             if self.__model_type == 'lstm':
-                (logit, prob, pred), hidden_state = self.__net(inputs, hidden_state)
+                (logit, prob, pred), hidden_state = self.net(inputs, hidden_state)
             elif self.__model_type == 'transformer_xl':
-                (logit, prob, pred), hidden_state = self.__net(
+                (logit, prob, pred), hidden_state = self.net(
                     inputs, hidden_state, n_extra_context if n_extra_context else self.param('n_context_memory'))
             else:
-                logit, prob, pred = self.__net(inputs)
+                logit, prob, pred = self.net(inputs)
 
             logit = logit.view(-1, logit.size(-1))
             outputs = outputs.view(-1)
