@@ -1,7 +1,7 @@
 vocab_size = 10000
 
 batch_size = 128
-embedding_dim = 256
+embedding_dim = 400
 n_hidden_units = 1150
 n_layers = 3
 n_context = 100
