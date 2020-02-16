@@ -81,7 +81,8 @@ class LanguageModel:
                 dropout_attention=self.param("dropout_attention"),
                 dropout_embedding=self.param("dropout_embedding"),
                 vocab_size=self.param("vocab_size"),
-                n_positional_embedding=self.param("n_positional_embedding")
+                n_positional_embedding=self.param("n_positional_embedding"),
+                initializer_range=self.param("init_range")
             )
         else:
             raise ValueError('bad model_type: %s' % model_type)

@@ -12,7 +12,7 @@ dropout_residual = 0.1
 dropout_attention = 0.0
 dropout_embedding = 0.1
 
-initializer_range = 0.02
+init_range = 0.02
 batch_size = 22
 
 lr = 0.00025

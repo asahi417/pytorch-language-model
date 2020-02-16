@@ -97,6 +97,7 @@ class TransformerXL(nn.Module):
 
         # transform
         logit, cached_key_value = self.transformer_decoder(w_embedding, cached_key_value, max_cache_length)
+        cached_key_value = self.repackage_hidden(cached_key_value)
 
         # get output
         batch, seq, dim = logit.size()
@@ -108,6 +109,14 @@ class TransformerXL(nn.Module):
         prob = torch.nn.functional.softmax(output, dim=1).view(batch, seq, output.size(1))
         output = output.view(batch, seq, output.size(1))
         return (output, prob, pred), cached_key_value
+
+    def repackage_hidden(self, h):
+        """Wraps hidden states in new Tensors, to detach them from their history."""
+
+        if isinstance(h, torch.Tensor):
+            return h.detach()
+        else:
+            return tuple(self.repackage_hidden(v) for v in h)
 
 
 if __name__ == '__main__':
@@ -157,13 +166,15 @@ if __name__ == '__main__':
     print(len(kv), len(kv[0]), kv[0][0].shape)
 
     print('\n * 4')
-    (_output, _prob, _pred), kv = gpt(sample, kv, max_cache_length=2)
-    print('outputs:', _output.shape, _prob.shape, _pred.shape)
-    print(len(kv), len(kv[0]), kv[0][0].shape)
-
+    (_output, _prob, _pred), kv = gpt(sample, kv)
     _logit = _output.view(-1, _output.size(-1))
     loss = nn.CrossEntropyLoss()(_logit, sample_output.view(-1))
     loss.backward()
-    print(_logit)
+    print(loss)
+
+    (_output, _prob, _pred), kv = gpt(sample, kv)
+    _logit = _output.view(-1, _output.size(-1))
+    loss = nn.CrossEntropyLoss()(_logit, sample_output.view(-1))
+    loss.backward()
     print(loss)
 
