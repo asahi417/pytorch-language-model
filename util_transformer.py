@@ -244,33 +244,33 @@ class SelfMaskedAttention(nn.Module):
             # batch, n_head, attended, 1, 1, dim / self.n_head)
             _q = q.view(batch, self.n_head, self.n_context, 1, 1, _dim)
             # batch, n_head, attended, attending
-            att_weight_r = torch.matmul(_q, rel_pos)
-            assert att_weight_r.size(-1) == 1 and att_weight_r.size(-2) == 1
-            att_weight_r = att_weight_r[:, :, :, :, 0, 0].contiguous()
-            assert att_weight.shape == att_weight_r.shape
+            att_weight_new = torch.matmul(_q, rel_pos)
+            assert att_weight_new.size(-1) == 1 and att_weight_new.size(-2) == 1
+            att_weight_new = att_weight_new[:, :, :, :, 0, 0].contiguous()
+            assert att_weight.shape == att_weight_new.shape
+            att_weight = att_weight_new + att_weight
 
             #######
             # (c) #
             #######
             _r_content_bias = r_content_bias.view(1, self.n_head, 1, 1, 1, _dim)
             # batch, n_head, attended, attending
-            att_weight_r_c = torch.matmul(_r_content_bias, rel_pos)
-            assert att_weight_r_c.size(-1) == 1 and att_weight_r_c.size(-2) == 1 and att_weight_r_c.size(0) == 1
-            att_weight_r_c = att_weight_r_c[:, :, :, :, 0, 0].contiguous()
-            assert att_weight.shape[1:4] == att_weight_r_c.shape[1:4]
+            att_weight_new = torch.matmul(_r_content_bias, rel_pos)
+            assert att_weight_new.size(-1) == 1 and att_weight_new.size(-2) == 1 and att_weight_new.size(0) == 1
+            att_weight_new = att_weight_new[:, :, :, :, 0, 0].contiguous()
+            assert att_weight.shape[1:4] == att_weight_new.shape[1:4]
+            att_weight = att_weight_new + att_weight
 
             #######
             # (d) #
             #######
             _r_position_bias = r_position_bias.view(1, self.n_head, 1, 1, 1, _dim)
             # batch, n_head, attended, attending
-            att_weight_r_p = torch.matmul(_r_position_bias, rel_pos)
-            assert att_weight_r_p.size(-1) == 1 and att_weight_r_p.size(-2) == 1 and att_weight_r_p.size(0) == 1
-            att_weight_r_p = att_weight_r_p[:, :, :, :, 0, 0].contiguous()
-            assert att_weight.shape[1:4] == att_weight_r_p.shape[1:4]
-
-            # get full attention
-            att_weight = att_weight + att_weight_r + att_weight_r_c + att_weight_r_p
+            att_weight_new = torch.matmul(_r_position_bias, rel_pos)
+            assert att_weight_new.size(-1) == 1 and att_weight_new.size(-2) == 1 and att_weight_new.size(0) == 1
+            att_weight_r_p = att_weight_new[:, :, :, :, 0, 0].contiguous()
+            assert att_weight.shape[1:4] == att_weight_new.shape[1:4]
+            att_weight = att_weight_new + att_weight
 
             # create mask for causal attention
             if cached_len == 0:
