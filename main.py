@@ -197,7 +197,10 @@ class LanguageModel:
 
         self.__logger.debug('initialize batch feeder')
         batch_param = dict(batch_size=self.param('batch_size'), num_steps=self.param('n_context'))
-        batch_param_valid = dict(batch_size=int(self.param('batch_size')/2), num_steps=self.param('n_context'))
+        if self.__model_type == 'transformer_xl':
+            batch_param_valid = dict(batch_size=int(self.param('batch_size')/2), num_steps=self.param('n_context'))
+        else:
+            batch_param_valid = batch_param
         loader_train = BatchFeeder(sequence=data_train, **batch_param)
         loader_valid = BatchFeeder(sequence=data_valid, **batch_param_valid)
 
@@ -302,8 +305,6 @@ class LanguageModel:
                                     % (self.__training_step, perplexity, bpc, lr))
 
             self.__training_step += 1
-            if i > 3:
-                break
         self.__epoch += 1
         return mean_loss, perplexity, bpc
 
@@ -314,7 +315,6 @@ class LanguageModel:
         full_loss = 0
         hidden_state = None
         for data in data_loader:
-            print('*')
             inputs, outputs = data
             if self.n_gpu > 0:
                 inputs, outputs = inputs.cuda(), outputs.cuda()
@@ -322,8 +322,10 @@ class LanguageModel:
             if self.__model_type == 'lstm':
                 (logit, prob, pred), hidden_state = self.net(inputs, hidden_state)
             elif self.__model_type == 'transformer_xl':
-                (logit, prob, pred), hidden_state = self.net(inputs, hidden_state, self.param('n_context_memory'))
-                    # inputs, hidden_state, n_extra_context if n_extra_context is not None else self.param('n_context_memory'))
+                (logit, prob, pred), hidden_state = self.net(
+                    inputs,
+                    hidden_state,
+                    n_extra_context if n_extra_context is not None else self.param('n_context_memory'))
                 # print(hidden_state)
             else:
                 logit, prob, pred = self.net(inputs)

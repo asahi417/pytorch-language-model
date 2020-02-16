@@ -20,6 +20,6 @@ weight_decay = 0.0
 clip = ''
 scheduler = 'constant'
 warmup_steps = 0
-total_steps = 15000
+total_steps = 10000
 optimizer = 'adamw'
 random_seed = 1111
