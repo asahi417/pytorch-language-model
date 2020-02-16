@@ -439,10 +439,10 @@ class TransformerDecoder(nn.Module):
         self.input_dropout = nn.Dropout(dropout_embedding)
         self.layer_norm = nn.LayerNorm(n_embedding)  # eps=1e-5
         assert n_embedding % n_head == 0
-        if n_positional_embedding:
+        if n_positional_embedding and n_positional_embedding != 0:
             self.pos_emb = PositionalEmbedding(n_positional_embedding)
-            self.r_c_bias = nn.Parameter(torch.Tensor(n_head, int(n_embedding/n_head)))
-            self.r_p_bias = nn.Parameter(torch.Tensor(n_head, int(n_embedding/n_head)))
+            self.r_c_bias = nn.Parameter(torch.zeros((n_head, int(n_embedding / n_head))))
+            self.r_p_bias = nn.Parameter(torch.zeros((n_head, int(n_embedding / n_head))))
         else:
             self.r_c_bias = self.r_p_bias = self.pos_emb = None
         self.n_layer = n_layer

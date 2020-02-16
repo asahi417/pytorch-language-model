@@ -64,7 +64,6 @@ class TransformerXL(nn.Module):
         self.init_weight()
 
     def __init_weight(self, _module):
-        self.initializer_range = 0.02
         if isinstance(_module, (nn.Linear, nn.Embedding)):
             _module.weight.data.normal_(mean=0.0, std=self.__initializer_range)
             if isinstance(_module, nn.Linear) and _module.bias is not None:
@@ -112,8 +111,15 @@ class TransformerXL(nn.Module):
 
 
 if __name__ == '__main__':
+    import random
+    import numpy as np
+    torch.manual_seed(1111)
+    random.seed(1111)
+    np.random.seed(1111)
+
     _batch, _seq, _dim = 10, 12, 100
     sample = torch.ones((_batch, _seq), dtype=torch.long)
+    sample_output = torch.ones((_batch, _seq), dtype=torch.long) * 2
     print('sample input:', sample.size())
 
     gpt = TransformerXL(
@@ -126,8 +132,15 @@ if __name__ == '__main__':
         dropout_attention=.1,
         dropout_embedding=.1,
         vocab_size=1000,
-        n_positional_embedding=10
+        n_positional_embedding=10,
+        initializer_range=0.001
     )
+    # for a in gpt.children():
+    #     print(type(a), list(a.children()))
+    # for name, param in gpt.named_parameters():
+    #     if param.requires_grad:
+    #         __shape = list(param.data.shape)
+    #         print(' - [weight size] %s: %s, %s' % (name, type(param), str(__shape)))
     print('\n * 1')
     (_output, _prob, _pred), kv = gpt(sample)
     print('outputs:', _output.shape, _prob.shape, _pred.shape)
@@ -147,4 +160,10 @@ if __name__ == '__main__':
     (_output, _prob, _pred), kv = gpt(sample, kv, max_cache_length=2)
     print('outputs:', _output.shape, _prob.shape, _pred.shape)
     print(len(kv), len(kv[0]), kv[0][0].shape)
+
+    _logit = _output.view(-1, _output.size(-1))
+    loss = nn.CrossEntropyLoss()(_logit, sample_output.view(-1))
+    loss.backward()
+    print(_logit)
+    print(loss)
 

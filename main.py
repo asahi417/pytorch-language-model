@@ -35,6 +35,14 @@ class LanguageModel:
             **kwargs)
         self.checkpoint_model = os.path.join(self.param.checkpoint_dir, 'model.pt')
 
+        # fix random seed
+        if self.param('random_seed'):
+            random.seed(self.param('random_seed'))
+            np.random.seed(self.param('random_seed'))
+            torch.manual_seed(self.param('random_seed'))
+            if self.n_gpu > 0:
+                torch.cuda.manual_seed_all(self.param('random_seed'))
+
         # build network
         if model_type == 'lstm':
             from model_lstm import StackedLSTM
@@ -146,14 +154,14 @@ class LanguageModel:
 
         # log
         self.__writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
-        self.__sanity_check(self.param('random_seed'))
+        self.__sanity_check()
         self.__model_type = model_type
 
     @property
     def hyperparameters(self):
         return self.param
 
-    def __sanity_check(self, seed: int):
+    def __sanity_check(self):
         """ sanity check as logging model size """
         self.__logger.debug('trainable variables')
         model_size = 0
@@ -166,14 +174,6 @@ class LanguageModel:
         self.__logger.debug('hyperparameters')
         for k, v in self.param.parameter.items():
             self.__logger.debug(' - [param] %s: %s' % (k, str(v)))
-
-        # fix random seed
-        if seed:
-            random.seed(seed)
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-            if self.n_gpu > 0:
-                torch.cuda.manual_seed_all(seed)
 
     def evaluate(self, data_valid, data_test=None, n_extra_context: int = None):
         """ evaluate model """
