@@ -19,5 +19,5 @@ clip = 0.25
 scheduler = 'cosine'
 warmup_steps = 0
 total_steps = 400000
-
+optimizer = 'adamw'
 random_seed = 1111
