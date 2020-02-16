@@ -36,12 +36,9 @@ class LanguageModel:
         self.checkpoint_model = os.path.join(self.param.checkpoint_dir, 'model.pt')
 
         # fix random seed
-        if self.param('random_seed'):
-            random.seed(self.param('random_seed'))
-            np.random.seed(self.param('random_seed'))
-            torch.manual_seed(self.param('random_seed'))
-            if self.n_gpu > 0:
-                torch.cuda.manual_seed_all(self.param('random_seed'))
+        random.seed(self.param('random_seed'))
+        np.random.seed(self.param('random_seed'))
+        torch.manual_seed(self.param('random_seed'))
 
         # build network
         if model_type == 'lstm':
