@@ -323,7 +323,7 @@ class LanguageModel:
             elif self.__model_type == 'transformer_xl':
                 (logit, prob, pred), hidden_state = self.net(inputs, hidden_state, self.param('n_context_memory'))
                     # inputs, hidden_state, n_extra_context if n_extra_context is not None else self.param('n_context_memory'))
-
+                print(hidden_state)
             else:
                 logit, prob, pred = self.net(inputs)
 
