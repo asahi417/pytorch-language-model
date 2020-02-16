@@ -155,7 +155,7 @@ def get_data(name,
     # test decoding
     if debug:
         encoded = tokenizer.encode(open(output_files[-1], 'r').read()[:100])
-        logger.debug(' - sample decoding \n    * %s \n     * %s' % (test, str(encoded.tokens)))
+        logger.debug(' - sample decoding \n     * %s' % str(encoded.tokens))
 
     # tokenize full corpus
     def convert_file(__file_path):
