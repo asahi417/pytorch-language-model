@@ -1,7 +1,7 @@
 """ pytorch TransformerXL """
 import torch
 import torch.nn as nn
-from module_transformer import TransformerDecoder
+from util_transformer import TransformerDecoder
 
 __all__ = ["TransformerXL"]
 

@@ -1,7 +1,7 @@
 """ pytroch GPT2 """
 import torch
 from torch import nn
-from module_transformer import TransformerDecoder
+from util_transformer import TransformerDecoder
 
 __all__ = ["GPT2"]
 

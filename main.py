@@ -358,6 +358,7 @@ if __name__ == '__main__':
     config_path = os.path.join(arguments.data, arguments.tokenizer, arguments.model)
 
     model_instance = LanguageModel(
+        model_type=arguments.model,
         checkpoint=arguments.ckpt,
         checkpoint_dir=os.path.join('./ckpt', config_path),
         default_parameter=os.path.join('./parameters', config_path) + '.toml')
