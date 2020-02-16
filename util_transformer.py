@@ -268,7 +268,7 @@ class SelfMaskedAttention(nn.Module):
             # batch, n_head, attended, attending
             att_weight_new = torch.matmul(_r_position_bias, rel_pos)
             assert att_weight_new.size(-1) == 1 and att_weight_new.size(-2) == 1 and att_weight_new.size(0) == 1
-            att_weight_r_p = att_weight_new[:, :, :, :, 0, 0].contiguous()
+            att_weight_new = att_weight_new[:, :, :, :, 0, 0].contiguous()
             assert att_weight.shape[1:4] == att_weight_new.shape[1:4]
             att_weight = att_weight_new + att_weight
 
