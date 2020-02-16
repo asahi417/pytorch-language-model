@@ -270,6 +270,7 @@ class LanguageModel:
                     (logit, prob, pred), _ = self.net(inputs)
             elif self.__model_type == 'transformer_xl':
                 (logit, prob, pred), hidden_state = self.net(inputs, hidden_state, self.param('n_context_memory'))
+                print(hidden_state)
             else:
                 logit, prob, pred = self.net(inputs)
             # backward: calculate gradient
@@ -300,7 +301,8 @@ class LanguageModel:
                                     % (self.__training_step, perplexity, bpc, lr))
 
             self.__training_step += 1
-            break
+            if i > 3:
+                break
         self.__epoch += 1
         return mean_loss, perplexity, bpc
 
