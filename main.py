@@ -197,8 +197,9 @@ class LanguageModel:
 
         self.__logger.debug('initialize batch feeder')
         batch_param = dict(batch_size=self.param('batch_size'), num_steps=self.param('n_context'))
+        batch_param_valid = dict(batch_size=int(self.param('batch_size')/2), num_steps=self.param('n_context'))
         loader_train = BatchFeeder(sequence=data_train, **batch_param)
-        loader_valid = BatchFeeder(sequence=data_valid, **batch_param)
+        loader_valid = BatchFeeder(sequence=data_valid, **batch_param_valid)
 
         try:
             with detect_anomaly():
@@ -217,7 +218,7 @@ class LanguageModel:
                     # TODO: Fix as this cant stop till the epoch done
                     if self.__training_step > self.param('total_steps'):
                         if data_test:
-                            loader_test = BatchFeeder(sequence=data_test, **batch_param)
+                            loader_test = BatchFeeder(sequence=data_test, **batch_param_valid)
                             loss, ppl, bpc = self.__epoch_valid(loader_test, is_test=True)
                             self.__logger.debug('(test) loss: %.3f, ppl: %.3f, bpc: %.3f' % (loss, ppl, bpc))
                         break

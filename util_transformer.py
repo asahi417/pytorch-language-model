@@ -463,7 +463,6 @@ class TransformerDecoder(nn.Module):
         """
         cached_length = cached_key_value[0][0].size(-1) if cached_key_value is not None else 0
         max_cache_length = min(cached_length, max_cache_length) if max_cache_length else cached_length
-        print(max_cache_length)
 
         if self.pos_emb:
             pos_seq = torch.arange(self.n_context + max_cache_length, device=x.device, dtype=x.dtype)
