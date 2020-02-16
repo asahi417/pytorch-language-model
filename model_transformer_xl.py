@@ -15,9 +15,9 @@ class TransformerXL(nn.Module):
                  n_state_ffn: int,
                  n_head: int,
                  n_context: int,
-                 residual_dropout: float,
-                 attention_dropout: float,
-                 embedding_dropout: float,
+                 dropout_residual: float,
+                 dropout_attention: float,
+                 dropout_embedding: float,
                  vocab_size: int,
                  n_positional_embedding: int,
                  initializer_range: float = 0.02):
@@ -33,9 +33,9 @@ class TransformerXL(nn.Module):
             intermediate state dimension
         n_head: int
             number of attention head
-        residual_dropout: float
-        attention_dropout: float
-        embedding_dropout: float
+        dropout_residual: float
+        dropout_attention: float
+        dropout_embedding: float
         n_context: int
             context length
         vocab_size: int
@@ -48,15 +48,15 @@ class TransformerXL(nn.Module):
         # nn.Embedding(a, b).weight.shape -> (a, b), while nn.Linear(a, b) -> (b, a)
         self.word_decoding = nn.Linear(n_embedding, vocab_size, bias=False)
         self.word_decoding.weight = self.word_embedding.weight
-        self.embedding_dropout = nn.Dropout(embedding_dropout)
+        self.dropout_embedding = nn.Dropout(dropout_embedding)
         self.transformer_decoder = TransformerDecoder(
             n_layer=n_layer,
             n_embedding=n_embedding,
             n_state_ffn=n_state_ffn,
             n_head=n_head,
-            residual_dropout=residual_dropout,
-            attention_dropout=attention_dropout,
-            embedding_dropout=embedding_dropout,
+            dropout_residual=dropout_residual,
+            dropout_attention=dropout_attention,
+            dropout_embedding=dropout_embedding,
             n_context=n_context,
             n_positional_embedding=n_positional_embedding
         )
@@ -122,9 +122,9 @@ if __name__ == '__main__':
         n_state_ffn=200,
         n_head=int(_dim / 25),
         n_context=_seq,
-        residual_dropout=.1,
-        attention_dropout=.1,
-        embedding_dropout=.1,
+        dropout_residual=.1,
+        dropout_attention=.1,
+        dropout_embedding=.1,
         vocab_size=1000,
         n_positional_embedding=10
     )

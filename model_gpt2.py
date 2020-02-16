@@ -15,9 +15,9 @@ class GPT2(nn.Module):
                  n_state_ffn: int,
                  n_head: int,
                  n_context: int,
-                 residual_dropout: float,
-                 attention_dropout: float,
-                 embedding_dropout: float,
+                 dropout_residual: float,
+                 dropout_attention: float,
+                 dropout_embedding: float,
                  vocab_size: int,
                  initializer_range: float=0.02):
         """ GPT2: transformer-based Language Model
@@ -32,9 +32,9 @@ class GPT2(nn.Module):
             intermediate state dimension
         n_head: int
             number of attention head
-        residual_dropout: float
-        attention_dropout: float
-        embedding_dropout: float
+        dropout_residual: float
+        dropout_attention: float
+        dropout_embedding: float
         n_context: int
             context length
         vocab_size: int
@@ -54,9 +54,9 @@ class GPT2(nn.Module):
                                                       n_embedding=n_embedding,
                                                       n_state_ffn=n_state_ffn,
                                                       n_head=n_head,
-                                                      residual_dropout=residual_dropout,
-                                                      attention_dropout=attention_dropout,
-                                                      embedding_dropout=embedding_dropout,
+                                                      dropout_residual=dropout_residual,
+                                                      dropout_attention=dropout_attention,
+                                                      dropout_embedding=dropout_embedding,
                                                       n_context=n_context)
         self.__initializer_range = initializer_range
         self.init_weight()
@@ -125,9 +125,9 @@ if __name__ == '__main__':
         n_state_ffn=200,
         n_head=int(_dim / 25),
         n_context=_seq,
-        residual_dropout=.1,
-        attention_dropout=.1,
-        embedding_dropout=.1,
+        dropout_residual=.1,
+        dropout_attention=.1,
+        dropout_embedding=.1,
         vocab_size=1000
     )
     _output, _prob, _pred = gpt(sample)

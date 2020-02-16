@@ -59,9 +59,9 @@ class LanguageModel:
                 n_state_ffn=self.param("n_state_ffn"),
                 n_head=self.param("n_head"),
                 n_context=self.param("n_context"),
-                residual_dropout=self.param("residual_dropout"),
-                attention_dropout=self.param("attention_dropout"),
-                embedding_dropout=self.param("embedding_dropout"),
+                dropout_residual=self.param("dropout_residual"),
+                dropout_attention=self.param("dropout_attention"),
+                dropout_embedding=self.param("dropout_embedding"),
                 vocab_size=self.param("vocab_size")
             )
         elif model_type == 'transformer_xl':
@@ -72,9 +72,9 @@ class LanguageModel:
                 n_state_ffn=self.param("n_state_ffn"),
                 n_head=self.param("n_head"),
                 n_context=self.param("n_context"),
-                residual_dropout=self.param("residual_dropout"),
-                attention_dropout=self.param("attention_dropout"),
-                embedding_dropout=self.param("embedding_dropout"),
+                dropout_residual=self.param("dropout_residual"),
+                dropout_attention=self.param("dropout_attention"),
+                dropout_embedding=self.param("dropout_embedding"),
                 vocab_size=self.param("vocab_size"),
                 n_positional_embedding=self.param("n_positional_embedding")
             )

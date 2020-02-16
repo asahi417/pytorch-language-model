@@ -122,8 +122,8 @@ class SelfMaskedAttention(nn.Module):
     def __init__(self,
                  n_embedding: int,
                  n_head: int,
-                 attention_dropout: float,
-                 residual_dropout: float,
+                 dropout_attention: float,
+                 dropout_residual: float,
                  n_context: int,
                  n_positional_embedding: int):
         """ masked multi-heads self (causal) attention module with caching
@@ -134,15 +134,15 @@ class SelfMaskedAttention(nn.Module):
             embedding dimension
         n_head: int
             number of attention head
-        attention_dropout: float
-        residual_dropout: float
+        dropout_attention: float
+        dropout_residual: float
         """
         super().__init__()
         assert n_embedding % n_head == 0
         self.linear_qkv = Conv1D(n_embedding, n_embedding * 3)  # 1d conv to get qkv once
         self.linear_heads = Conv1D(n_embedding, n_embedding)
-        self.attention_dropout = nn.Dropout(attention_dropout)
-        self.residual_dropout = nn.Dropout(residual_dropout)
+        self.dropout_attention = nn.Dropout(dropout_attention)
+        self.dropout_residual = nn.Dropout(dropout_residual)
         self.register_buffer(
             'mask',
             torch.tensor([[int(r <= c) for r in range(n_context)] for c in range(n_context)], dtype=torch.float))
@@ -283,7 +283,7 @@ class SelfMaskedAttention(nn.Module):
             mask = self.mask
 
         att_weight = self.masked_softmax(att_weight / math.sqrt(q.size(-1)), mask=mask, dim=-1)
-        att_weight = self.attention_dropout(att_weight)
+        att_weight = self.dropout_attention(att_weight)
         return att_weight
 
     @staticmethod
@@ -326,7 +326,7 @@ class SelfMaskedAttention(nn.Module):
         context_vector = context_vector.view(context_vector.size(0), context_vector.size(1), -1)
         # merge head and residual dropout
         context_vector = self.linear_heads(context_vector)
-        context_vector = self.residual_dropout(context_vector)
+        context_vector = self.dropout_residual(context_vector)
         return context_vector, (k, v)
 
 
@@ -337,8 +337,8 @@ class TransformerBlock(nn.Module):
                  n_embedding: int,
                  n_state_ffn: int,
                  n_head: int,
-                 residual_dropout: float,
-                 attention_dropout: float,
+                 dropout_residual: float,
+                 dropout_attention: float,
                  n_context: int,
                  n_positional_embedding: int=None):
         """ single Transformer Decoder Block
@@ -351,8 +351,8 @@ class TransformerBlock(nn.Module):
             intermediate state dimension
         n_head: int
             number of attention head
-        residual_dropout: float
-        attention_dropout: float
+        dropout_residual: float
+        dropout_attention: float
         """
         super().__init__()
         self.layer_norm_1 = nn.LayerNorm(n_embedding)
@@ -360,8 +360,8 @@ class TransformerBlock(nn.Module):
         self.pointwise_ff = PointwiseFeedForward(n_embedding, n_state_ffn)
         self.self_attention = SelfMaskedAttention(n_embedding=n_embedding,
                                                   n_head=n_head,
-                                                  attention_dropout=attention_dropout,
-                                                  residual_dropout=residual_dropout,
+                                                  dropout_attention=dropout_attention,
+                                                  dropout_residual=dropout_residual,
                                                   n_context=n_context,
                                                   n_positional_embedding=n_positional_embedding)
 
@@ -401,9 +401,9 @@ class TransformerDecoder(nn.Module):
                  n_embedding: int,
                  n_state_ffn: int,
                  n_head: int,
-                 embedding_dropout: float,
-                 residual_dropout: float,
-                 attention_dropout: float,
+                 dropout_embedding: float,
+                 dropout_residual: float,
+                 dropout_attention: float,
                  n_context: int,
                  n_positional_embedding: int = None):
         """ Transformer Decoder
@@ -418,8 +418,8 @@ class TransformerDecoder(nn.Module):
             intermediate state dimension
         n_head: int
             number of attention head
-        residual_dropout: float
-        attention_dropout: float
+        dropout_residual: float
+        dropout_attention: float
         max_cache_size: int
             max cache size for key/value
         n_positional_embedding: int
@@ -430,13 +430,13 @@ class TransformerDecoder(nn.Module):
             TransformerBlock(n_embedding=n_embedding,
                              n_state_ffn=n_state_ffn,
                              n_head=n_head,
-                             residual_dropout=residual_dropout,
-                             attention_dropout=attention_dropout,
+                             dropout_residual=dropout_residual,
+                             dropout_attention=dropout_attention,
                              n_context=n_context,
                              n_positional_embedding=n_positional_embedding)
             for _ in range(n_layer)
         ])
-        self.input_dropout = nn.Dropout(embedding_dropout)
+        self.input_dropout = nn.Dropout(dropout_embedding)
         self.layer_norm = nn.LayerNorm(n_embedding)  # eps=1e-5
         assert n_embedding % n_head == 0
         if n_positional_embedding:

@@ -7,9 +7,15 @@ n_embedding = 512
 n_state_ffn = 2048
 n_context = 512
 n_context_memory = 512
+
+dropout_residual = 0.1
+dropout_attention = 0.0
+dropout_embedding = 0.1
+
 residual_dropout = 0.1
 attention_dropout = 0.0
 embedding_dropout = 0.1
+
 initializer_range = 0.02
 batch_size = 22
 
