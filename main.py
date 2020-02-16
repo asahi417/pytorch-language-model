@@ -203,7 +203,7 @@ class LanguageModel:
         try:
             with detect_anomaly():
                 while True:
-                    loss, ppl, bpc = self.__epoch_train(loader_train, progress_interval=progress_interval)
+                    # loss, ppl, bpc = self.__epoch_train(loader_train, progress_interval=progress_interval)
                     val_loss, val_ppl, val_bpc = self.__epoch_valid(loader_valid)
                     self.__logger.debug(
                         '[epoch %i] (train) loss: %.3f, ppl: %.3f, bpc: %.3f (valid) loss: %.3f, ppl: %.3f, bpc: %.3f'
