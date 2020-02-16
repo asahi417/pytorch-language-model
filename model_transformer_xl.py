@@ -120,12 +120,8 @@ class TransformerXL(nn.Module):
 
 
 if __name__ == '__main__':
-    import random
-    import numpy as np
+    # debug
     torch.manual_seed(1111)
-    random.seed(1111)
-    np.random.seed(1111)
-
     _batch, _seq, _dim = 10, 12, 100
     sample = torch.ones((_batch, _seq), dtype=torch.long)
     sample_output = torch.ones((_batch, _seq), dtype=torch.long) * 2
