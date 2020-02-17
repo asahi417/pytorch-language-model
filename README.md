@@ -22,13 +22,13 @@ pip install -r requirement.txt
 
 | model | tokenizer      |  perplexity (valid) | perplexity (test)  | parameter |
 | ----- |:---------------|:-------------------:|:------------------:|:---------:|
-| LSTM  | SentencePieace | 46.94               | 46.52              | [toml file](./parameters/WikiText103/SentencePieceBPETokenizer/lstm.toml) | 
+| LSTM  | SentencePieace | 43.31               | 43.15              | [toml file](./parameters/WikiText103/SentencePieceBPETokenizer/lstm.toml) | 
 
 - enwiki8
 
 | model | tokenizer      |  bpc (valid) | bpc (test)  | parameter |
 | ----- |:---------------|:------------:|:-----------:|:---------:|
-| LSTM  | Whitespace     |          |         | [toml file](./parameters/enwiki8/WhitespaceTokenizer/lstm.toml) | 
+| LSTM  | Whitespace     | 1.71         | 1.702       | [toml file](./parameters/enwiki8/WhitespaceTokenizer/lstm.toml) | 
 
 
 ## Forthcoming...
@@ -40,4 +40,8 @@ pip install -r requirement.txt
 - [ ] mixture precision (fp16 training) 
 - [ ] Async data batcher
 - [ ] Adaptive Softmax of transformer XL in WikiText103 (SentencePiece can reduce the vocab so may not be needed anymore)
+
+## Checkpoint
+- [ ] WikiText further train `wkahhxbtix3`
+- [ ] enwiki8 further train `exruxoigkx`
   

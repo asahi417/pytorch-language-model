@@ -19,7 +19,7 @@ weight_decay = 1.2e-6
 total_steps = 400000
 
 random_seed = 1234
-pass_state = false
+pass_state = true
 
 clip = ''
 

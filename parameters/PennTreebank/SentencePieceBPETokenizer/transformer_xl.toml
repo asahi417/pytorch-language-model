@@ -12,14 +12,14 @@ dropout_residual = 0.1
 dropout_attention = 0.0
 dropout_embedding = 0.1
 
-init_range = 0.02
+init_range = 0.001
 batch_size = 22
 
 lr = 0.00025
-weight_decay = 0.0
-clip = ''
+weight_decay = 1.2e-6
+clip = 0.5
 scheduler = 'constant'
 warmup_steps = 0
-total_steps = 10000
+total_steps = 12000
 optimizer = 'adamw'
 random_seed = 1111
