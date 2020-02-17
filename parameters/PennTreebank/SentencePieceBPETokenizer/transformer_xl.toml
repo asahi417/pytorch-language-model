@@ -17,8 +17,8 @@ batch_size = 22
 
 lr = 0.00025
 weight_decay = 1.2e-6
-clip = 0.5
-scheduler = 'constant'
+clip = 10.0
+scheduler = 'linear'
 warmup_steps = 0
 total_steps = 12000
 optimizer = 'adamw'
