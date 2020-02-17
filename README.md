@@ -42,6 +42,6 @@ pip install -r requirement.txt
 - [ ] Adaptive Softmax of transformer XL in WikiText103 (SentencePiece can reduce the vocab so may not be needed anymore)
 
 ## Checkpoint
-- [ ] WikiText further train `wkahhxbtix3`
+- [ ] WikiText further train `wkahhxbtix4`
 - [ ] enwiki8 further train `exruxoigkx`
   

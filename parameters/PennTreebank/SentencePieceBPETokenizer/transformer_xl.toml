@@ -16,10 +16,10 @@ init_range = 0.001
 batch_size = 22
 
 lr = 0.00025
-weight_decay = 1.2e-6
-clip = 10.0
-scheduler = 'constant'
+weight_decay = 0.0
+clip = 0.25
+scheduler = 'cosine'
 warmup_steps = 0
-total_steps = 12000
+total_steps = 400000
 optimizer = 'adamw'
 random_seed = 1111
