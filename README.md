@@ -22,7 +22,7 @@ pip install -r requirement.txt
 
 | model | tokenizer      |  perplexity (valid) | perplexity (test)  | parameter |
 | ----- |:---------------|:-------------------:|:------------------:|:---------:|
-| LSTM  | SentencePieace | 43.31               | 43.15              | [toml file](./parameters/WikiText103/SentencePieceBPETokenizer/lstm.toml) | 
+| LSTM  | SentencePieace | 39.40               | 39.53              | [toml file](./parameters/WikiText103/SentencePieceBPETokenizer/lstm.toml) | 
 
 - enwiki8
 
@@ -41,7 +41,4 @@ pip install -r requirement.txt
 - [ ] Async data batcher
 - [ ] Adaptive Softmax of transformer XL in WikiText103 (SentencePiece can reduce the vocab so may not be needed anymore)
 
-## Checkpoint
-- [ ] WikiText further train `wkahhxbtix4`
-- [ ] enwiki8 further train `exruxoigkx`
   
