@@ -117,9 +117,9 @@ class LanguageModel:
             raise ValueError('bad optimizer: %s' % self.param("optimizer"))
         if self.param('scheduler') == 'constant':
             self.scheduler = get_constant_schedule(self.optimizer)
-        elif self.param('scheduler') == 'cosine':
-            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer, self.param('total_steps'), eta_min=0)
+        # elif self.param('scheduler') == 'cosine':
+        #     self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        #         self.optimizer, self.param('total_steps'), eta_min=0)
         elif self.param('scheduler') == 'linear':
             self.scheduler = get_linear_schedule_with_warmup(
                 self.optimizer,

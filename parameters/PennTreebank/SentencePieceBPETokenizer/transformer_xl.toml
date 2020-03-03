@@ -1,12 +1,13 @@
 vocab_size = 10000
 
+n_positional_embedding = 512
+n_context_memory = 128
+
 n_layer = 6
 n_head = 8
-n_positional_embedding = 512
 n_embedding = 512
 n_state_ffn = 2048
 n_context = 128
-n_context_memory = 128
 
 dropout_residual = 0.1
 dropout_attention = 0.0
@@ -16,9 +17,9 @@ init_range = 0.001
 batch_size = 22
 
 lr = 0.00025
-weight_decay = 0.0
-clip = 0.25
-scheduler = 'cosine'
+weight_decay = 0.01
+clip = ''  # 0.25
+scheduler = 'constant'
 warmup_steps = 0
 total_steps = 400000
 optimizer = 'adamw'

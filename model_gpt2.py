@@ -80,22 +80,17 @@ class GPT2(nn.Module):
          Parameter
         -------------
         x: token id batch tensor (batch, sequence_length)
-        cached_key_value: cached key/value tensor
 
          Return
         -------------
-        (output, prob, pred):
-            output: raw output from Transformer decoder (sequence_length, batch, vocab size)
-            prob: softmax activated output (sequence_length, batch, vocab size)
-            pred: prediction (sequence_length, batch)
-        cached_key_value: new cached_key_value
+        output: raw output from Transformer decoder (sequence_length, batch, vocab size)
+        prob: softmax activated output (sequence_length, batch, vocab size)
+        pred: prediction (sequence_length, batch)
         """
-
-        start_position_id = 0
 
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
-        position_ids = self.position_ids[start_position_id:start_position_id + x.size(-1)].unsqueeze(0)
+        position_ids = self.position_ids[:x.size(-1)].unsqueeze(0)
         p_embedding = self.position_embedding(position_ids)
         embedding = p_embedding + w_embedding
 
