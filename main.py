@@ -284,9 +284,10 @@ class LanguageModel:
 
             # backward: calculate gradient
             prob = prob.add(EPS)
-            prob = prob.view(-1, prob.size(-1))
+            log_prob = prob.log()
+            log_prob = log_prob.view(-1, log_prob.size(-1))
             outputs = outputs.view(-1)
-            tmp_loss = self.__loss(prob, outputs)
+            tmp_loss = self.__loss(log_prob, outputs)
             tmp_loss.backward()
             # gradient clip
             if self.param('clip') is not None:
