@@ -3,6 +3,7 @@ import argparse
 import os
 import copy
 import random
+import traceback
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,7 +15,7 @@ from util_data import BatchFeeder, get_data, VALID_DATA_LIST, VALID_TOKENIZER_LI
 from util_hf_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
 
-EPS = 1e-7
+EPS = 1e-7  # for log softmax numeric stability
 
 
 class LanguageModel:
@@ -128,8 +129,8 @@ class LanguageModel:
         else:
             raise ValueError('bad scheduler: %s' % self.param('scheduler'))
 
-        # loss definition (CrossEntropyLoss includes softmax inside)
-        # self.__loss = nn.CrossEntropyLoss()
+        # NLL + LogSoftmax is more stable than CrossEnt
+        # https://discuss.pytorch.org/t/nan-loss-in-rnn-model/655/3
         self.__loss = nn.NLLLoss()
 
         # load pre-trained ckpt
@@ -219,13 +220,16 @@ class LanguageModel:
                         self.__best_epoch = self.__epoch
                         self.__best_val_ppl = val_ppl
 
-                    # TODO: Fix as this cant stop till the epoch done
                     if self.__training_step > self.param('total_steps'):
                         if data_test:
                             loader_test = BatchFeeder(sequence=data_test, **batch_param_valid)
                             loss, ppl, bpc = self.__epoch_valid(loader_test, is_test=True)
                             self.__logger.debug('(test) loss: %.3f, ppl: %.3f, bpc: %.3f' % (loss, ppl, bpc))
                         break
+
+        except RuntimeError:
+            self.__logger.debug(traceback.format_exc())
+            self.__logger.info('*** RuntimeError (NaN is found, see above log in detail) ***')
 
         except KeyboardInterrupt:
             self.__logger.info('*** KeyboardInterrupt ***')
@@ -244,7 +248,7 @@ class LanguageModel:
             'val_ppl': val_ppl,
             'best_epoch': self.__best_epoch,
             'best_val_ppl': self.__best_val_ppl,
-            'best_model_state_dict': best_model_wts,
+            'best_model_state_dict': best_model_wts
         }, self.checkpoint_model)
         self.__writer.close()
         self.__logger.info('ckpt saved at %s' % self.checkpoint_model)
@@ -307,6 +311,11 @@ class LanguageModel:
                                     % (self.__training_step, perplexity, bpc, lr))
 
             self.__training_step += 1
+
+            if self.__training_step >= self.param('total_steps'):
+                self.__epoch += 1
+                return mean_loss, perplexity, bpc
+
         self.__epoch += 1
         return mean_loss, perplexity, bpc
 

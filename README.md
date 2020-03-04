@@ -34,7 +34,7 @@ pip install -r requirement.txt
 ## Forthcoming...
 - [x] Remove batch in validation
 - [x] Regard `<eos>` as a special token in SentencePiece tokenizer
-- [x] Train from other checkpoint
+- [x] Train from other checkpoint 
 - [ ] Configuration for Transformer XL (enwiki/Penn/Wikitext103): Still getting NAN!!
 - [ ] [Adaptive Attention Span](https://arxiv.org/pdf/1905.07799.pdf) as it efficiently runs on single GPU.
 - [ ] mixture precision (fp16 training) 
