@@ -106,12 +106,11 @@ class TransformerXL(nn.Module):
         batch, seq, dim = logit.size()
         logit = logit.view(batch * seq, dim)  # (batch, seq, dim) -> (batch * seq, dim)
         output = self.word_decoding(logit).float()  # (batch * seq, dim) -> (batch * seq, vocab)
+        output = output.clamp(min=-CLAMP_EXP, max=CLAMP_EXP)
 
         # get pred/prob
         pred = torch.max(output, dim=1)[1].view(batch, seq)
-        prob = torch.nn.functional.softmax(
-            output.clamp(min=-CLAMP_EXP, max=CLAMP_EXP),
-            dim=1).view(batch, seq, output.size(1))
+        prob = torch.nn.functional.softmax(output, dim=1).view(batch, seq, output.size(1))
         output = output.view(batch, seq, output.size(1))
         return (output, prob, pred), cached_key_value
 
@@ -145,12 +144,6 @@ if __name__ == '__main__':
         n_positional_embedding=10,
         initializer_range=0.001
     )
-    # for a in gpt.children():
-    #     print(type(a), list(a.children()))
-    # for name, param in gpt.named_parameters():
-    #     if param.requires_grad:
-    #         __shape = list(param.data.shape)
-    #         print(' - [weight size] %s: %s, %s' % (name, type(param), str(__shape)))
     print('\n * 1')
     (_output, _prob, _pred), kv = gpt(sample)
     print('outputs:', _output.shape, _prob.shape, _pred.shape)

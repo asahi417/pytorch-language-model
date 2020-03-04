@@ -10,7 +10,7 @@ __all__ = [
     "PointwiseFeedForward",
     "SelfMaskedAttention",
     "TransformerBlock",
-    "TransformerDecoder"
+    "TransformerDecoder",
 ]
 
 EPS = 1e-5  # numeric stability for division
@@ -292,8 +292,7 @@ class SelfMaskedAttention(nn.Module):
 
     @staticmethod
     def masked_softmax(vec, mask, dim=1):
-        """ softmax ignoring zero value """
-        # safe exponential
+        """ softmax ignoring zero value: clamp the input to softmax is very important as it gets exploding easily """
         vec = torch.clamp(vec.float(), min=-CLAMP_EXP, max=CLAMP_EXP)
         exps = torch.exp(vec)
         masked_exps = exps * mask.float()
@@ -324,7 +323,6 @@ class SelfMaskedAttention(nn.Module):
         q, k, v = self.query_key_value(x, cached_key_value)
         # attention mask: batch, head, seq, seq + cache
         att_weight = self.masked_attention_weight(q, k, r_position_embedding, r_content_bias, r_position_bias)
-        # print('att', att_weight)
         # batch, head, seq, dim/head
         context_vector = torch.matmul(att_weight, v)
         # batch, seq, dim/head, head
@@ -334,7 +332,6 @@ class SelfMaskedAttention(nn.Module):
         # merge head and residual dropout
         context_vector = self.linear_heads(context_vector)
         context_vector = self.dropout_residual(context_vector)
-        # print('cont', context_vector)
         return context_vector, (k, v)
 
 
@@ -446,7 +443,7 @@ class TransformerDecoder(nn.Module):
             for _ in range(n_layer)
         ])
         self.input_dropout = nn.Dropout(dropout_embedding)
-        self.layer_norm = nn.LayerNorm(n_embedding, eps=EPS_LAYER_NORM)  # eps=1e-5
+        self.layer_norm = nn.LayerNorm(n_embedding, eps=EPS_LAYER_NORM)
         assert n_embedding % n_head == 0
         if n_positional_embedding and n_positional_embedding != 0:
             self.pos_emb = PositionalEmbedding(n_positional_embedding)
@@ -488,23 +485,16 @@ class TransformerDecoder(nn.Module):
         x = self.input_dropout(x)
         cached_key_value_new = []
         for transformer_block, cached_kv in zip(self.transformer_stack, cached_key_value):
-
             # limit cached context length
             if cached_kv is not None and max_cache_length < cached_length:
                 k, v = cached_kv
                 cached_kv = (k[:, :, :, -max_cache_length:].detach(), v[:, :, -max_cache_length:, :].detach())
-
-            # print('layer %i' % len(cached_key_value_new))
             x, (k, v) = transformer_block(x,
                                           cached_key_value=cached_kv,
                                           r_position_embedding=pos_emb,
                                           r_content_bias=self.r_c_bias,
                                           r_position_bias=self.r_p_bias)
-
             cached_key_value_new.append((k, v))
-
-        # print(x)
-        # exit()
         x = self.layer_norm(x)
         return x, cached_key_value_new
 

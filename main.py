@@ -15,9 +15,6 @@ from util_data import BatchFeeder, get_data, VALID_DATA_LIST, VALID_TOKENIZER_LI
 from util_hf_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
 
-# EPS = 1e-5  # for log softmax numeric stability
-
-
 class LanguageModel:
     """ language model """
 
@@ -129,9 +126,6 @@ class LanguageModel:
         else:
             raise ValueError('bad scheduler: %s' % self.param('scheduler'))
 
-        # NLL + LogSoftmax is more stable than CrossEnt
-        # https://discuss.pytorch.org/t/nan-loss-in-rnn-model/655/3
-        # self.__loss = nn.NLLLoss()
         self.__loss = nn.CrossEntropyLoss()
 
         # load pre-trained ckpt
@@ -283,8 +277,6 @@ class LanguageModel:
             else:
                 logit, prob, _ = self.net(inputs)
             # backward: calculate gradient
-            # log_prob = prob.add(EPS).log()  # stabilize to avoid NaN
-            # tmp_loss = self.__loss(log_prob.view(-1, log_prob.size(-1)), outputs.view(-1))
             tmp_loss = self.__loss(logit.view(-1, logit.size(-1)), outputs.view(-1))
             tmp_loss.backward()
             # gradient clip
@@ -338,8 +330,6 @@ class LanguageModel:
             else:
                 logit, prob, _ = self.net(inputs)
             # backward: calculate gradient
-            # log_prob = prob.add(EPS).log()  # stabilize to avoid NaN
-            # tmp_loss = self.__loss(log_prob.view(-1, log_prob.size(-1)), outputs.view(-1))
             tmp_loss = self.__loss(logit.view(-1, logit.size(-1)), outputs.view(-1))
             full_loss += len(outputs) * tmp_loss.cpu().item()
             full_seq_length += len(outputs)
