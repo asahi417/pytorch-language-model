@@ -13,6 +13,8 @@ __all__ = [
     "TransformerDecoder"
 ]
 
+EPS = 1e-5
+
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, n_emb):
@@ -282,17 +284,17 @@ class SelfMaskedAttention(nn.Module):
             assert self.n_context == seq_attending and cached_len == 0
             mask = self.mask
 
-        att_weight = self.masked_softmax(att_weight / math.sqrt(q.size(-1)), mask=mask, dim=-1)
+        att_weight = self.masked_softmax(att_weight / (math.sqrt(q.size(-1)) + EPS), mask=mask, dim=-1)
         att_weight = self.dropout_attention(att_weight)
         return att_weight
 
     @staticmethod
-    def masked_softmax(vec, mask, dim=1, epsilon=1e-5):
+    def masked_softmax(vec, mask, dim=1):
         """ softmax ignoring zero value """
         exps = torch.exp(vec.float())
         masked_exps = exps * mask.float()
-        masked_sums = masked_exps.sum(dim, keepdim=True) + epsilon
-        return masked_exps / masked_sums
+        masked_sums = masked_exps.sum(dim, keepdim=True) + EPS
+        return masked_exps / (masked_sums + EPS)
 
     def forward(self,
                 x,
