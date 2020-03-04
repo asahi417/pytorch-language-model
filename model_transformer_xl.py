@@ -102,6 +102,7 @@ class TransformerXL(nn.Module):
         # get output
         batch, seq, dim = logit.size()
         logit = logit.view(batch * seq, dim)  # (batch, seq, dim) -> (batch * seq, dim)
+        print(logit)
         output = self.word_decoding(logit).float()  # (batch * seq, dim) -> (batch * seq, vocab)
 
         # get pred/prob
