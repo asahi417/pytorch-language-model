@@ -15,7 +15,7 @@ from util_data import BatchFeeder, get_data, VALID_DATA_LIST, VALID_TOKENIZER_LI
 from util_hf_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
 
-EPS = 1e-7  # for log softmax numeric stability
+EPS = 1e-5  # for log softmax numeric stability
 
 
 class LanguageModel:
