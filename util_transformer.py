@@ -320,6 +320,7 @@ class SelfMaskedAttention(nn.Module):
         q, k, v = self.query_key_value(x, cached_key_value)
         # attention mask: batch, head, seq, seq + cache
         att_weight = self.masked_attention_weight(q, k, r_position_embedding, r_content_bias, r_position_bias)
+        print(att_weight)
         # batch, head, seq, dim/head
         context_vector = torch.matmul(att_weight, v)
         # batch, seq, dim/head, head
@@ -487,12 +488,13 @@ class TransformerDecoder(nn.Module):
                 k, v = cached_kv
                 cached_kv = (k[:, :, :, -max_cache_length:].detach(), v[:, :, -max_cache_length:, :].detach())
 
+            print('layer %i' % len(cached_key_value_new))
             x, (k, v) = transformer_block(x,
                                           cached_key_value=cached_kv,
                                           r_position_embedding=pos_emb,
                                           r_content_bias=self.r_c_bias,
                                           r_position_bias=self.r_p_bias)
-            print('layer %i' % len(cached_key_value_new), x)
+
             print()
             cached_key_value_new.append((k, v))
 
