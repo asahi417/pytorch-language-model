@@ -15,7 +15,7 @@ from util_data import BatchFeeder, get_data, VALID_DATA_LIST, VALID_TOKENIZER_LI
 from util_hf_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
 
-EPS = 1e-5  # for log softmax numeric stability
+# EPS = 1e-5  # for log softmax numeric stability
 
 
 class LanguageModel:
@@ -131,7 +131,8 @@ class LanguageModel:
 
         # NLL + LogSoftmax is more stable than CrossEnt
         # https://discuss.pytorch.org/t/nan-loss-in-rnn-model/655/3
-        self.__loss = nn.NLLLoss()
+        # self.__loss = nn.NLLLoss()
+        self.__loss = nn.CrossEntropyLoss()
 
         # load pre-trained ckpt
         if os.path.exists(self.checkpoint_model):
@@ -274,19 +275,17 @@ class LanguageModel:
             # forward: output prediction and get loss
             if self.__model_type == 'lstm':
                 if self.param('pass_state'):
-                    (_, prob, _), hidden_state = self.net(inputs, hidden_state)
+                    (logit, prob, _), hidden_state = self.net(inputs, hidden_state)
                 else:
-                    (_, prob, _), _ = self.net(inputs)
+                    (logit, prob, _), _ = self.net(inputs)
             elif self.__model_type == 'transformer_xl':
                 (logit, prob, _), hidden_state = self.net(inputs, hidden_state, self.param('n_context_memory'))
             else:
                 logit, prob, _ = self.net(inputs)
             # backward: calculate gradient
-            print(logit)
-            print(prob)
-            log_prob = prob.add(EPS).log()  # stabilize to avoid NaN
-            print(log_prob)
-            tmp_loss = self.__loss(log_prob.view(-1, log_prob.size(-1)), outputs.view(-1))
+            # log_prob = prob.add(EPS).log()  # stabilize to avoid NaN
+            # tmp_loss = self.__loss(log_prob.view(-1, log_prob.size(-1)), outputs.view(-1))
+            tmp_loss = self.__loss(logit.view(-1, logit.size(-1)), outputs.view(-1))
             tmp_loss.backward()
             # gradient clip
             if self.param('clip') is not None:
@@ -330,17 +329,18 @@ class LanguageModel:
             if self.n_gpu > 0:
                 inputs, outputs = inputs.cuda(), outputs.cuda()
             if self.__model_type == 'lstm':
-                (_, prob, _), hidden_state = self.net(inputs, hidden_state)
+                (logit, prob, _), hidden_state = self.net(inputs, hidden_state)
             elif self.__model_type == 'transformer_xl':
-                (_, prob, _), hidden_state = self.net(
+                (logit, prob, _), hidden_state = self.net(
                     inputs,
                     hidden_state,
                     n_extra_context if n_extra_context is not None else self.param('n_context_memory'))
             else:
-                _, prob, _ = self.net(inputs)
+                logit, prob, _ = self.net(inputs)
             # backward: calculate gradient
-            log_prob = prob.add(EPS).log()  # stabilize to avoid NaN
-            tmp_loss = self.__loss(log_prob.view(-1, log_prob.size(-1)), outputs.view(-1))
+            # log_prob = prob.add(EPS).log()  # stabilize to avoid NaN
+            # tmp_loss = self.__loss(log_prob.view(-1, log_prob.size(-1)), outputs.view(-1))
+            tmp_loss = self.__loss(logit.view(-1, logit.size(-1)), outputs.view(-1))
             full_loss += len(outputs) * tmp_loss.cpu().item()
             full_seq_length += len(outputs)
         mean_loss = full_loss / full_seq_length

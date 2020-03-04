@@ -13,9 +13,10 @@ __all__ = [
     "TransformerDecoder"
 ]
 
-EPS = 1e-5
-EPS_LAYER_NORM = 1e-5
-CLAMP_EXP = 15
+EPS = 1e-5  # numeric stability for division
+EPS_LAYER_NORM = 1e-5  # numeric stability for layernorm
+CLAMP_EXP = 15  # to avoid exploding exponentiation
+
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, n_emb):
@@ -297,7 +298,6 @@ class SelfMaskedAttention(nn.Module):
         exps = torch.exp(vec)
         masked_exps = exps * mask.float()
         masked_sums = masked_exps.sum(dim, keepdim=True)
-        print(masked_sums)
         return masked_exps / (masked_sums + EPS)
 
     def forward(self,
@@ -494,7 +494,7 @@ class TransformerDecoder(nn.Module):
                 k, v = cached_kv
                 cached_kv = (k[:, :, :, -max_cache_length:].detach(), v[:, :, -max_cache_length:, :].detach())
 
-            print('layer %i' % len(cached_key_value_new))
+            # print('layer %i' % len(cached_key_value_new))
             x, (k, v) = transformer_block(x,
                                           cached_key_value=cached_kv,
                                           r_position_embedding=pos_emb,
@@ -503,8 +503,8 @@ class TransformerDecoder(nn.Module):
 
             cached_key_value_new.append((k, v))
 
-        print(x)
-        exit()
+        # print(x)
+        # exit()
         x = self.layer_norm(x)
         return x, cached_key_value_new
 

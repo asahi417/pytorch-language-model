@@ -7,6 +7,7 @@ __all__ = ["TransformerXL"]
 
 
 EPS = 1e-5  # for numeric stability
+CLAMP_EXP = 15  # to avoid exploding exponentiation
 
 
 class TransformerXL(nn.Module):
@@ -97,9 +98,6 @@ class TransformerXL(nn.Module):
 
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
-        print("emb", w_embedding)
-        print()
-
         # transform
         logit, cached_key_value = self.transformer_decoder(w_embedding, cached_key_value, max_cache_length)
         cached_key_value = self.repackage_hidden(cached_key_value)
@@ -107,12 +105,13 @@ class TransformerXL(nn.Module):
         # get output
         batch, seq, dim = logit.size()
         logit = logit.view(batch * seq, dim)  # (batch, seq, dim) -> (batch * seq, dim)
-        print(logit)
         output = self.word_decoding(logit).float()  # (batch * seq, dim) -> (batch * seq, vocab)
 
         # get pred/prob
         pred = torch.max(output, dim=1)[1].view(batch, seq)
-        prob = torch.nn.functional.softmax(output + EPS, dim=1).view(batch, seq, output.size(1))
+        prob = torch.nn.functional.softmax(
+            output.clamp(min=-CLAMP_EXP, max=CLAMP_EXP),
+            dim=1).view(batch, seq, output.size(1))
         output = output.view(batch, seq, output.size(1))
         return (output, prob, pred), cached_key_value
 
