@@ -320,7 +320,7 @@ class SelfMaskedAttention(nn.Module):
         q, k, v = self.query_key_value(x, cached_key_value)
         # attention mask: batch, head, seq, seq + cache
         att_weight = self.masked_attention_weight(q, k, r_position_embedding, r_content_bias, r_position_bias)
-        print('att', att_weight)
+        # print('att', att_weight)
         # batch, head, seq, dim/head
         context_vector = torch.matmul(att_weight, v)
         # batch, seq, dim/head, head
@@ -394,6 +394,7 @@ class TransformerBlock(nn.Module):
                                         r_content_bias=r_content_bias,
                                         r_position_bias=r_position_bias)
         output = x + self.pointwise_ff(self.layer_norm_2(x + c))
+        print('out', output)
         return output, (k, v)
 
 
