@@ -330,7 +330,7 @@ class SelfMaskedAttention(nn.Module):
         # merge head and residual dropout
         context_vector = self.linear_heads(context_vector)
         context_vector = self.dropout_residual(context_vector)
-        print('cont', att_weight)
+        print('cont', context_vector)
         return context_vector, (k, v)
 
 
