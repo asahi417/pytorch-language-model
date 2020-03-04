@@ -97,6 +97,8 @@ class TransformerXL(nn.Module):
 
         # get embedding
         w_embedding = self.word_embedding(x)  # dropout embeddings
+        print("emb", w_embedding)
+        print()
 
         # transform
         logit, cached_key_value = self.transformer_decoder(w_embedding, cached_key_value, max_cache_length)
