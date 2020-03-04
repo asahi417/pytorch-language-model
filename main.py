@@ -278,10 +278,11 @@ class LanguageModel:
                 else:
                     (_, prob, _), _ = self.net(inputs)
             elif self.__model_type == 'transformer_xl':
-                (_, prob, _), hidden_state = self.net(inputs, hidden_state, self.param('n_context_memory'))
+                (logit, prob, _), hidden_state = self.net(inputs, hidden_state, self.param('n_context_memory'))
             else:
-                _, prob, _ = self.net(inputs)
+                logit, prob, _ = self.net(inputs)
             # backward: calculate gradient
+            print(logit)
             print(prob)
             log_prob = prob.add(EPS).log()  # stabilize to avoid NaN
             print(log_prob)
