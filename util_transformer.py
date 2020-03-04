@@ -320,7 +320,7 @@ class SelfMaskedAttention(nn.Module):
         q, k, v = self.query_key_value(x, cached_key_value)
         # attention mask: batch, head, seq, seq + cache
         att_weight = self.masked_attention_weight(q, k, r_position_embedding, r_content_bias, r_position_bias)
-        print(att_weight)
+        print('att', att_weight)
         # batch, head, seq, dim/head
         context_vector = torch.matmul(att_weight, v)
         # batch, seq, dim/head, head
@@ -330,6 +330,7 @@ class SelfMaskedAttention(nn.Module):
         # merge head and residual dropout
         context_vector = self.linear_heads(context_vector)
         context_vector = self.dropout_residual(context_vector)
+        print('cont', att_weight)
         return context_vector, (k, v)
 
 
@@ -489,7 +490,7 @@ class TransformerDecoder(nn.Module):
                 cached_kv = (k[:, :, :, -max_cache_length:].detach(), v[:, :, -max_cache_length:, :].detach())
 
             print('layer %i' % len(cached_key_value_new))
-            if len(cached_key_value_new) == 4:
+            if len(cached_key_value_new) == 5:
                 exit()
             x, (k, v) = transformer_block(x,
                                           cached_key_value=cached_kv,
