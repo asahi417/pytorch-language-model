@@ -282,7 +282,9 @@ class LanguageModel:
             else:
                 _, prob, _ = self.net(inputs)
             # backward: calculate gradient
+            print(prob)
             log_prob = prob.add(EPS).log()  # stabilize to avoid NaN
+            print(log_prob)
             tmp_loss = self.__loss(log_prob.view(-1, log_prob.size(-1)), outputs.view(-1))
             tmp_loss.backward()
             # gradient clip
