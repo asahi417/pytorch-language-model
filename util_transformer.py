@@ -14,7 +14,7 @@ __all__ = [
 ]
 
 EPS = 1
-EPS_LAYER_NORM = 1
+EPS_LAYER_NORM = 1e-5
 
 
 class PositionalEmbedding(nn.Module):
