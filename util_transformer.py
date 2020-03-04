@@ -489,7 +489,7 @@ class TransformerDecoder(nn.Module):
                 cached_kv = (k[:, :, :, -max_cache_length:].detach(), v[:, :, -max_cache_length:, :].detach())
 
             print('layer %i' % len(cached_key_value_new))
-            if len(cached_key_value_new) == 6:
+            if len(cached_key_value_new) == 4:
                 exit()
             x, (k, v) = transformer_block(x,
                                           cached_key_value=cached_kv,
