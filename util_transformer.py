@@ -492,6 +492,8 @@ class TransformerDecoder(nn.Module):
                                           r_position_embedding=pos_emb,
                                           r_content_bias=self.r_c_bias,
                                           r_position_bias=self.r_p_bias)
+            print('layer', x)
+            print()
             cached_key_value_new.append((k, v))
 
         x = self.layer_norm(x)
