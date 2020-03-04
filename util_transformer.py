@@ -13,9 +13,9 @@ __all__ = [
     "TransformerDecoder"
 ]
 
-EPS = 1e-4
-EPS_LAYER_NORM = 1e-4
-
+EPS = 1e-5
+EPS_LAYER_NORM = 1e-5
+CLAMP_EXP = 15
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, n_emb):
@@ -292,9 +292,11 @@ class SelfMaskedAttention(nn.Module):
     @staticmethod
     def masked_softmax(vec, mask, dim=1):
         """ softmax ignoring zero value """
-        exps = torch.exp(vec.float())
+        # safe exponential
+        vec = torch.clamp(vec.float(), min=-CLAMP_EXP, max=CLAMP_EXP)
+        exps = torch.exp(vec)
         masked_exps = exps * mask.float()
-        masked_sums = masked_exps.sum(dim, keepdim=True) + EPS
+        masked_sums = masked_exps.sum(dim, keepdim=True)
         print(masked_sums)
         return masked_exps / (masked_sums + EPS)
 
@@ -396,7 +398,7 @@ class TransformerBlock(nn.Module):
                                         r_content_bias=r_content_bias,
                                         r_position_bias=r_position_bias)
         output = x + self.pointwise_ff(self.layer_norm_2(x + c))
-        print('out', output)
+        # print('out', output)
         return output, (k, v)
 
 
@@ -501,6 +503,7 @@ class TransformerDecoder(nn.Module):
 
             cached_key_value_new.append((k, v))
 
+        print(x)
         exit()
         x = self.layer_norm(x)
         return x, cached_key_value_new
