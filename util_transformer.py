@@ -491,8 +491,6 @@ class TransformerDecoder(nn.Module):
                 cached_kv = (k[:, :, :, -max_cache_length:].detach(), v[:, :, -max_cache_length:, :].detach())
 
             print('layer %i' % len(cached_key_value_new))
-            if len(cached_key_value_new) == 5:
-                exit()
             x, (k, v) = transformer_block(x,
                                           cached_key_value=cached_kv,
                                           r_position_embedding=pos_emb,
@@ -502,6 +500,7 @@ class TransformerDecoder(nn.Module):
             print()
             cached_key_value_new.append((k, v))
 
+        exit()
         x = self.layer_norm(x)
         return x, cached_key_value_new
 
