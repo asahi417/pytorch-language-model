@@ -14,6 +14,9 @@ from util_data import BatchFeeder, get_data, VALID_DATA_LIST, VALID_TOKENIZER_LI
 from util_hf_optimizer import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 
 
+EPS = 1e-7
+
+
 class LanguageModel:
     """ language model """
 
@@ -117,9 +120,6 @@ class LanguageModel:
             raise ValueError('bad optimizer: %s' % self.param("optimizer"))
         if self.param('scheduler') == 'constant':
             self.scheduler = get_constant_schedule(self.optimizer)
-        # elif self.param('scheduler') == 'cosine':
-        #     self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        #         self.optimizer, self.param('total_steps'), eta_min=0)
         elif self.param('scheduler') == 'linear':
             self.scheduler = get_linear_schedule_with_warmup(
                 self.optimizer,
@@ -129,7 +129,8 @@ class LanguageModel:
             raise ValueError('bad scheduler: %s' % self.param('scheduler'))
 
         # loss definition (CrossEntropyLoss includes softmax inside)
-        self.__loss = nn.CrossEntropyLoss()
+        # self.__loss = nn.CrossEntropyLoss()
+        self.__loss = nn.NLLLoss()
 
         # load pre-trained ckpt
         if os.path.exists(self.checkpoint_model):
@@ -269,18 +270,19 @@ class LanguageModel:
             # forward: output prediction and get loss
             if self.__model_type == 'lstm':
                 if self.param('pass_state'):
-                    (logit, prob, pred), hidden_state = self.net(inputs, hidden_state)
+                    (_, prob, pred), hidden_state = self.net(inputs, hidden_state)
                 else:
-                    (logit, prob, pred), _ = self.net(inputs)
+                    (_, prob, pred), _ = self.net(inputs)
             elif self.__model_type == 'transformer_xl':
-                (logit, prob, pred), hidden_state = self.net(inputs, hidden_state, self.param('n_context_memory'))
-                # print(hidden_state)
+                (_, prob, pred), hidden_state = self.net(inputs, hidden_state, self.param('n_context_memory'))
             else:
-                logit, prob, pred = self.net(inputs)
+                _, prob, pred = self.net(inputs)
+
             # backward: calculate gradient
-            logit = logit.view(-1, logit.size(-1))
+            prob = prob.add(EPS)
+            prob = prob.view(-1, prob.size(-1))
             outputs = outputs.view(-1)
-            tmp_loss = self.__loss(logit, outputs)
+            tmp_loss = self.__loss(prob, outputs)
             tmp_loss.backward()
             # gradient clip
             if self.param('clip') is not None:
