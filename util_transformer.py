@@ -13,8 +13,8 @@ __all__ = [
     "TransformerDecoder"
 ]
 
-EPS = 1
-EPS_LAYER_NORM = 1e-5
+EPS = 13-4
+EPS_LAYER_NORM = 1e-4
 
 
 class PositionalEmbedding(nn.Module):
