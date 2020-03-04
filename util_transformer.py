@@ -13,7 +13,7 @@ __all__ = [
     "TransformerDecoder"
 ]
 
-EPS = 13-4
+EPS = 1e-4
 EPS_LAYER_NORM = 1e-4
 
 
