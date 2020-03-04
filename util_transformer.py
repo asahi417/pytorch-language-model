@@ -357,8 +357,8 @@ class TransformerBlock(nn.Module):
         dropout_attention: float
         """
         super().__init__()
-        self.layer_norm_1 = nn.LayerNorm(n_embedding)
-        self.layer_norm_2 = nn.LayerNorm(n_embedding)
+        self.layer_norm_1 = nn.LayerNorm(n_embedding, eps=EPS)
+        self.layer_norm_2 = nn.LayerNorm(n_embedding, eps=EPS)
         self.pointwise_ff = PointwiseFeedForward(n_embedding, n_state_ffn)
         self.self_attention = SelfMaskedAttention(n_embedding=n_embedding,
                                                   n_head=n_head,
@@ -439,7 +439,7 @@ class TransformerDecoder(nn.Module):
             for _ in range(n_layer)
         ])
         self.input_dropout = nn.Dropout(dropout_embedding)
-        self.layer_norm = nn.LayerNorm(n_embedding)  # eps=1e-5
+        self.layer_norm = nn.LayerNorm(n_embedding, eps=EPS)  # eps=1e-5
         assert n_embedding % n_head == 0
         if n_positional_embedding and n_positional_embedding != 0:
             self.pos_emb = PositionalEmbedding(n_positional_embedding)
@@ -492,7 +492,7 @@ class TransformerDecoder(nn.Module):
                                           r_position_embedding=pos_emb,
                                           r_content_bias=self.r_c_bias,
                                           r_position_bias=self.r_p_bias)
-            print('layer', x)
+            print('layer %i' % len(cached_key_value_new), x)
             print()
             cached_key_value_new.append((k, v))
 
