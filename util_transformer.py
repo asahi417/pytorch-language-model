@@ -285,7 +285,7 @@ class SelfMaskedAttention(nn.Module):
             assert self.n_context == seq_attending and cached_len == 0
             mask = self.mask
 
-        att_weight = self.masked_softmax(att_weight / (math.sqrt(q.size(-1)) + EPS), mask=mask, dim=-1)
+        att_weight = self.masked_softmax(att_weight / math.sqrt(q.size(-1)), mask=mask, dim=-1)
         att_weight = self.dropout_attention(att_weight)
         return att_weight
 
@@ -295,6 +295,7 @@ class SelfMaskedAttention(nn.Module):
         exps = torch.exp(vec.float())
         masked_exps = exps * mask.float()
         masked_sums = masked_exps.sum(dim, keepdim=True) + EPS
+        print(masked_sums)
         return masked_exps / (masked_sums + EPS)
 
     def forward(self,
@@ -331,7 +332,7 @@ class SelfMaskedAttention(nn.Module):
         # merge head and residual dropout
         context_vector = self.linear_heads(context_vector)
         context_vector = self.dropout_residual(context_vector)
-        print('cont', context_vector)
+        # print('cont', context_vector)
         return context_vector, (k, v)
 
 
@@ -498,7 +499,6 @@ class TransformerDecoder(nn.Module):
                                           r_content_bias=self.r_c_bias,
                                           r_position_bias=self.r_p_bias)
 
-            print()
             cached_key_value_new.append((k, v))
 
         exit()
