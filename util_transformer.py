@@ -13,7 +13,8 @@ __all__ = [
     "TransformerDecoder"
 ]
 
-EPS = 1e-3
+EPS = 1
+EPS_LAYER_NORM = 1
 
 
 class PositionalEmbedding(nn.Module):
@@ -359,8 +360,8 @@ class TransformerBlock(nn.Module):
         dropout_attention: float
         """
         super().__init__()
-        self.layer_norm_1 = nn.LayerNorm(n_embedding, eps=EPS)
-        self.layer_norm_2 = nn.LayerNorm(n_embedding, eps=EPS)
+        self.layer_norm_1 = nn.LayerNorm(n_embedding, eps=EPS_LAYER_NORM)
+        self.layer_norm_2 = nn.LayerNorm(n_embedding, eps=EPS_LAYER_NORM)
         self.pointwise_ff = PointwiseFeedForward(n_embedding, n_state_ffn)
         self.self_attention = SelfMaskedAttention(n_embedding=n_embedding,
                                                   n_head=n_head,
@@ -442,7 +443,7 @@ class TransformerDecoder(nn.Module):
             for _ in range(n_layer)
         ])
         self.input_dropout = nn.Dropout(dropout_embedding)
-        self.layer_norm = nn.LayerNorm(n_embedding, eps=EPS)  # eps=1e-5
+        self.layer_norm = nn.LayerNorm(n_embedding, eps=EPS_LAYER_NORM)  # eps=1e-5
         assert n_embedding % n_head == 0
         if n_positional_embedding and n_positional_embedding != 0:
             self.pos_emb = PositionalEmbedding(n_positional_embedding)
