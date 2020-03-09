@@ -35,10 +35,9 @@ pip install -r requirement.txt
 - [x] Remove batch in validation
 - [x] Regard `<eos>` as a special token in SentencePiece tokenizer
 - [x] Train from other checkpoint
-- [ ] **WIP:** change CrossEnt -> LogSoftmax (EPS added) + NLL 
+- [x] Avoid explosion by clamp exp 
 - [ ] mixture precision (fp16 training) 
 - [ ] [Adaptive Attention Span](https://arxiv.org/pdf/1905.07799.pdf) as it efficiently runs on single GPU.
 - [ ] Async data batcher (well, the RAM is always full so it might not be useful anymore...)
-- [ ] Adaptive Softmax of transformer XL in WikiText103 (SentencePiece can reduce the vocab so may not be needed anymore)
 
   
