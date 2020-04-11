@@ -474,5 +474,7 @@ if __name__ == '__main__':
     if opt.inference_mode:
         classifier.train()
     else:
-        classifier.predict()
+        pass
+        
+        # classifier.predict()
 
