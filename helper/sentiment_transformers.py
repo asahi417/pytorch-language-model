@@ -125,14 +125,12 @@ class Dataset(torch.utils.data.Dataset):
     def __init__(self,
                  data: list,
                  label: list=None,
-                 transform_function=None,
-                 device: str = 'cpu'):
+                 transform_function=None):
         self.data = data
         if label is None:
             self.label = None
         else:
             self.label = [int(l) for l in label]
-        self.device = device
         self.transform_function = transform_function
 
     def __len__(self):
@@ -140,13 +138,13 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         if self.transform_function:
-            out_data = torch.tensor(self.transform_function(self.data[idx]), dtype=torch.long).to(self.device)
+            out_data = torch.tensor(self.transform_function(self.data[idx]), dtype=torch.long)
         else:
-            out_data = torch.tensor(self.data[idx], dtype=torch.long).to(self.device)
+            out_data = torch.tensor(self.data[idx], dtype=torch.long)
         if self.label is None:
             return out_data
         else:
-            out_label = torch.tensor(self.label[idx], dtype=torch.long).to(self.device)
+            out_label = torch.tensor(self.label[idx], dtype=torch.long)
             return out_data, out_label
 
 
@@ -264,6 +262,7 @@ class TransformerSequenceClassifier:
         self.token_encoder = TokenEncoder(self.param('transformer'))
         self.model_seq_cls = model_seq_cls_class.from_pretrained(
             self.param('transformer'), cache_dir=CACHE_DIR, num_labels=num_labels)
+        self.model_seq_cls.train()
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
@@ -353,17 +352,17 @@ class TransformerSequenceClassifier:
         LOGGER.info('setup dataset')
         dataset_split, _ = get_dataset(self.param('dataset'))
         data_loader_train = torch.utils.data.DataLoader(
-            Dataset(*dataset_split[0], transform_function=self.token_encoder, device=self.device),
+            Dataset(*dataset_split[0], transform_function=self.token_encoder),
             batch_size=self.param('batch_size'),
             shuffle=True,
             num_workers=NUM_WORKER,
             drop_last=True)
         data_loader_valid = torch.utils.data.DataLoader(
-            Dataset(*dataset_split[1], transform_function=self.token_encoder, device=self.device),
+            Dataset(*dataset_split[1], transform_function=self.token_encoder),
             batch_size=self.param('batch_size'))
         if len(dataset_split) > 2:
             data_loader_test = torch.utils.data.DataLoader(
-                Dataset(*dataset_split[1], transform_function=self.token_encoder, device=self.device),
+                Dataset(*dataset_split[1], transform_function=self.token_encoder),
                 batch_size=self.param('batch_size'))
         else:
             data_loader_test = None
@@ -392,7 +391,7 @@ class TransformerSequenceClassifier:
             exit('nothing to be saved')
 
         LOGGER.info('[training completed] best model: valid loss %0.3f at step %i'
-                     % (self.__best_val_loss, self.__best_val_loss_step))
+                    % (self.__best_val_loss, self.__best_val_loss_step))
         torch.save({
             'model_state_dict': self.model_seq_cls.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -407,10 +406,13 @@ class TransformerSequenceClassifier:
         LOGGER.info('ckpt saved at %s' % self.checkpoint_model)
 
     def __epoch_train(self, data_loader):
-        """ train on single epoc, return flag which is True if training has been completed """
+        """ train on single epoch return flag which is True if training has been completed """
         self.model_seq_cls.train()
 
         for i, (inputs, outputs) in enumerate(data_loader, 1):
+
+            inputs = inputs.to(self.device)
+            outputs = outputs.to(self.device)
 
             # zero the parameter gradients
             self.optimizer.zero_grad()
