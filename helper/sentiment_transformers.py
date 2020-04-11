@@ -149,7 +149,7 @@ class ParameterManager:
         """
         self.prefix = prefix
         self.checkpoint_dir, self.parameter = self.__versioning(kwargs, checkpoint)
-        LOGGER.debug('checkpoint: %s' % self.checkpoint_dir)
+        LOGGER.info('checkpoint: %s' % self.checkpoint_dir)
 
     def __call__(self, key):
         """ retrieve a parameter """
@@ -184,7 +184,7 @@ class ParameterManager:
             raise ValueError('either of `checkpoint` or `parameter` is needed.')
 
         if checkpoint is None:
-            LOGGER.debug('issue new checkpoint id')
+            LOGGER.info('issue new checkpoint id')
             # check if there are any checkpoints with same hyperparameters
             version_name = []
             for parameter_path in glob(os.path.join(CKPT_DIR, '*/hyperparameters.json')):
@@ -210,7 +210,7 @@ class ParameterManager:
             return new_checkpoint_path, parameter
 
         else:
-            LOGGER.debug('load existing checkpoint')
+            LOGGER.info('load existing checkpoint')
             checkpoints = glob(os.path.join(CKPT_DIR, checkpoint, 'hyperparameters.json'))
             if len(checkpoints) >= 2:
                 raise ValueError('Checkpoints are duplicated: %s' % str(checkpoints))
@@ -226,10 +226,9 @@ class TransformerSequenceClassifier:
 
     def __init__(self,
                  dataset: str,
-                 # load_best_model: bool = False,
                  checkpoint: str=None,
                  **kwargs):
-        LOGGER.debug('*** initialize network ***')
+        LOGGER.info('*** initialize network ***')
 
         # checkpoint versioning
         self.param = ParameterManager(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
@@ -255,7 +254,7 @@ class TransformerSequenceClassifier:
             self.model_seq_cls = torch.nn.DataParallel(self.model_seq_cls.cuda())
         else:
             self.n_gpu = 0
-        LOGGER.debug('running on %i GPUs' % self.n_gpu)
+        LOGGER.info('running on %i GPUs' % self.n_gpu)
         self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
 
         # optimizer
@@ -296,7 +295,7 @@ class TransformerSequenceClassifier:
             self.__best_val_loss = ckpt['best_val_loss']
             self.__best_val_loss_step = ckpt['best_val_loss_step']
             self.__best_model_wts = ckpt['best_model_state_dict']
-            LOGGER.debug('load ckpt from %s' % self.checkpoint_model)
+            LOGGER.info('load ckpt from %s' % self.checkpoint_model)
         else:
             self.__step = 0
             self.__epoch = 0
@@ -313,10 +312,10 @@ class TransformerSequenceClassifier:
         for k, v in self.model_seq_cls.__dict__['_modules'].items():
             if hasattr(v, 'weight'):
                 model_size += np.prod(v.weight.shape)
-                LOGGER.debug(' - [weight size] %s: %s' % (k, str(list(v.weight.shape))))
-        LOGGER.debug(' - %i variables in total' % model_size)
+                LOGGER.info(' - [weight size] %s: %s' % (k, str(list(v.weight.shape))))
+        LOGGER.info(' - %i variables in total' % model_size)
         for k, v in self.param.parameter.items():
-            LOGGER.debug(' - [param] %s: %s' % (k, str(v)))
+            LOGGER.info(' - [param] %s: %s' % (k, str(v)))
 
     def predict(self, x: list):
         data_loader = torch.utils.data.DataLoader(
@@ -332,6 +331,7 @@ class TransformerSequenceClassifier:
     def train(self):
 
         # setup data loader
+        LOGGER.info('setup dataset')
         dataset_split, _ = get_dataset(self.param('dataset'))
         data_loader_train = torch.utils.data.DataLoader(
             Dataset(*dataset_split[0], transform_function=self.token_encoder, device=self.device),
@@ -349,6 +349,7 @@ class TransformerSequenceClassifier:
         else:
             data_loader_test = None
 
+        LOGGER.info('start training')
         try:
             with detect_anomaly():
                 while True:
@@ -361,7 +362,7 @@ class TransformerSequenceClassifier:
                     self.__epoch += 1
 
         except RuntimeError:
-            LOGGER.debug(traceback.format_exc())
+            LOGGER.info(traceback.format_exc())
             LOGGER.info('*** RuntimeError (NaN found, see above log in detail) ***')
 
         except KeyboardInterrupt:
@@ -370,7 +371,7 @@ class TransformerSequenceClassifier:
         if self.__best_val_loss is None:
             exit('nothing to be saved')
 
-        LOGGER.debug('[training completed] best model: valid loss %0.3f at step %i'
+        LOGGER.info('[training completed] best model: valid loss %0.3f at step %i'
                      % (self.__best_val_loss, self.__best_val_loss_step))
         torch.save({
             'model_state_dict': self.model_seq_cls.state_dict(),
@@ -415,13 +416,13 @@ class TransformerSequenceClassifier:
             self.writer.add_scalar('learning_rate', inst_lr, self.__step)
 
             if self.__step % PROGRESS_INTERVAL == 0:
-                LOGGER.debug(' * (step %i) accuracy: %.3f, loss: %.3f, lr: %0.6f'
+                LOGGER.info(' * (step %i) accuracy: %.3f, loss: %.3f, lr: %0.6f'
                              % (self.__step, inst_accuracy, inst_loss, inst_lr))
 
             self.__step += 1
 
             if self.__step >= self.param('total_step'):
-                LOGGER.debug('reached total step')
+                LOGGER.info('reached total step')
                 return True
 
         return False
@@ -442,7 +443,7 @@ class TransformerSequenceClassifier:
 
         self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
         self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
-        LOGGER.debug('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
+        LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
 
         if self.__best_val_loss is None or loss < self.__best_val_loss:
             self.__best_val_loss = loss
@@ -451,7 +452,7 @@ class TransformerSequenceClassifier:
         else:
             loss_margin = loss - self.__best_val_loss
             if self.param('tolerance') is not None and self.param('tolerance') < loss_margin:
-                LOGGER.debug('early stop as loss exceeds tolerance: %0.2f < %0.2f '
+                LOGGER.info('early stop as loss exceeds tolerance: %0.2f < %0.2f '
                              % (self.param('tolerance'), loss_margin))
                 return True
         return False
