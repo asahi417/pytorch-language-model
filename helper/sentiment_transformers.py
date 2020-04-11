@@ -114,14 +114,14 @@ class Dataset(torch.utils.data.Dataset):
         else:
             self.label = [int(l) for l in label]
         self.device = device
-        self.transforms = transform_function
+        self.transform_function = transform_function
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         if self.transform_function:
-            out_data = torch.tensor(self.transforms(self.data[idx]), dtype=torch.long).to(self.device)
+            out_data = torch.tensor(self.transform_function(self.data[idx]), dtype=torch.long).to(self.device)
         else:
             out_data = torch.tensor(self.data[idx], dtype=torch.long).to(self.device)
         if self.label is None:
