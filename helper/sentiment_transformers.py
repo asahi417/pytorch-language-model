@@ -300,7 +300,7 @@ class TransformerSequenceClassifier:
         else:
             self.__step = 0
             self.__epoch = 0
-            self.__best_val_loss_ = None
+            self.__best_val_loss = None
             self.__best_val_loss_step = None
             self.__best_model_wts = None
 
