@@ -212,11 +212,12 @@ class TransformerSequenceClassifier:
     def __init__(self,
                  dataset: str,
                  # load_best_model: bool = False,
+                 checkpoint: str=None,
                  **kwargs):
         LOGGER.debug('*** initialize network ***')
 
         # checkpoint versioning
-        self.param = ParameterManager(prefix=dataset, dataset=dataset, **kwargs)
+        self.param = ParameterManager(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
         self.checkpoint_model = os.path.join(self.param.checkpoint_dir, 'model.pt')
 
         # fix random seed
@@ -300,6 +301,11 @@ class TransformerSequenceClassifier:
         LOGGER.debug(' - %i variables in total' % model_size)
         for k, v in self.param.parameter.items():
             LOGGER.debug(' - [param] %s: %s' % (k, str(v)))
+
+    def predict(self, x):
+        pass
+        # outputs = self.model_seq_cls(inputs, outputs)
+        # loss, logit = outputs[0:2]
 
     def train(self):
 
@@ -444,13 +450,15 @@ def get_options():
     parser.add_argument('--warmup-step', help='warmup step', default=5000, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=1e-7, type=float)
     parser.add_argument('--tolerance', help='tolerance for valid loss', default=None, type=float)
-    # parser.add_argument('--inference')
+    parser.add_argument('--checkpoint', help='checkpoint to load', default=None, type=str)
+    parser.add_argument('--inference-mode', help='inference mode', action='store_true')
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     opt = get_options()
     classifier = TransformerSequenceClassifier(
+        checkpoint=opt.checkpoint,
         dataset=opt.data,
         transformer=opt.transformer,
         random_seed=opt.random_seed,
@@ -460,7 +468,11 @@ if __name__ == '__main__':
         scheduler=opt.scheduler,
         total_step=opt.total_step,
         warmup_step=opt.warmup_step,
-        tolerance=opt.tolerance
+        tolerance=opt.tolerance,
+        weight_decay=opt.weight_decay
     )
-    classifier.train()
+    if opt.inference_mode:
+        classifier.train()
+    else:
+        classifier.predict()
 
