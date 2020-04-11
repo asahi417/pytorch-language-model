@@ -17,8 +17,27 @@ from torch import nn
 from torch.autograd import detect_anomaly
 from torch.utils.tensorboard import SummaryWriter
 from glob import glob
+from logging.config import dictConfig
+
 import util_hf_optimizer
 
+dictConfig(
+    dict(
+        version=1,
+        formatters={
+            'f': {'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'}
+        },
+        handlers={
+            'h': {'class': 'logging.StreamHandler',
+                  'formatter': 'f',
+                  'level': logging.DEBUG}
+        },
+        root={
+            'handlers': ['h'],
+            'level': logging.DEBUG,
+        }
+    )
+)
 LOGGER = logging.getLogger()
 NUM_WORKER = int(os.getenv("NUM_WORKER", '4'))
 PROGRESS_INTERVAL = int(os.getenv("PROGRESS_INTERVAL", '500'))
@@ -349,7 +368,7 @@ class TransformerSequenceClassifier:
         else:
             data_loader_test = None
 
-        LOGGER.info('start training')
+        LOGGER.info('start training from step %i (epoch: %i)' % (self.__step, self.__epoch))
         try:
             with detect_anomaly():
                 while True:
@@ -362,6 +381,7 @@ class TransformerSequenceClassifier:
                     self.__epoch += 1
 
         except RuntimeError:
+            print('fuck')
             LOGGER.info(traceback.format_exc())
             LOGGER.info('*** RuntimeError (NaN found, see above log in detail) ***')
 
