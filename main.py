@@ -149,15 +149,14 @@ class LanguageModel:
 
         # log
         self.__writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
-        self.__sanity_check()
         self.__model_type = model_type
+        self.show_config()
 
     @property
     def hyperparameters(self):
         return self.param
 
-    def __sanity_check(self):
-        """ sanity check as logging model size """
+    def show_config(self):
         self.__logger.debug('trainable variables')
         model_size = 0
         for name, param in self.net.named_parameters():
@@ -166,7 +165,6 @@ class LanguageModel:
                 model_size += np.prod(__shape)
                 self.__logger.debug(' - [weight size] %s: %s' % (name, str(__shape)))
         self.__logger.debug(' - %i variables in total' % model_size)
-        self.__logger.debug('hyperparameters')
         for k, v in self.param.parameter.items():
             self.__logger.debug(' - [param] %s: %s' % (k, str(v)))
 

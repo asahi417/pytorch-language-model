@@ -13,4 +13,5 @@ data
 ckpt
 vocab
 apex
+cache
 

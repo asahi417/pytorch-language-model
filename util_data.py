@@ -84,7 +84,7 @@ def get_data(name,
              data_directory: str = './data',
              vocab_directory: str = './vocab',
              eos_symbol: str = '<eos>',
-             special_symbols: list = None,
+             special_tokens: list = None,
              debug: bool = False,
              vocab_size: int = 30000):
     """ Get file path to tokenized benchmark data
@@ -101,7 +101,7 @@ def get_data(name,
     list of token_id list (train/valid/test)
     """
     logger = create_log()
-    if special_symbols is not None:
+    if special_tokens is not None:
         special_tokens += eos_symbol
     else:
         special_tokens = [eos_symbol]
