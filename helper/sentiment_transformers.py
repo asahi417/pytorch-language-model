@@ -85,21 +85,13 @@ def get_dataset(data_name: str = 'sst'):
     return data_split, num_labels
 
 
-class Dataset(torch.utils.data.Dataset):
-    """ torch.utils.data.Dataset instance """
+class TokenEncoder:
+    """ Token encoder with transformers tokenizer """
 
-    def __init__(self,
-                 data: list,
-                 label: list,
-                 transformer: str,
-                 device: str = 'cpu'):
-        self.data = data
-        self.label = [int(l) for l in label]
-        self.device = device
-        # setup tokenizer as transformation of input data
+    def __init__(self, transformer: str):
         self.tokenizer = VALID_TOKENIZER[transformer].from_pretrained(transformer, cache_dir=CACHE_DIR)
 
-    def encode(self, text):
+    def __call__(self, text):
         token_ids = self.tokenizer.encode(text)
         if self.tokenizer.max_len <= len(token_ids):
             token_ids = token_ids[:self.tokenizer.max_len]
@@ -107,13 +99,36 @@ class Dataset(torch.utils.data.Dataset):
             token_ids = token_ids + [self.tokenizer.pad_token_id] * (self.tokenizer.max_len - len(token_ids))
         return token_ids
 
+
+class Dataset(torch.utils.data.Dataset):
+    """ torch.utils.data.Dataset instance """
+
+    def __init__(self,
+                 data: list,
+                 label: list=None,
+                 transform_function=None,
+                 device: str = 'cpu'):
+        self.data = data
+        if label is None:
+            self.label = None
+        else:
+            self.label = [int(l) for l in label]
+        self.device = device
+        self.transforms = transform_function
+
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        out_data = torch.tensor(self.encode(self.data[idx]), dtype=torch.long).to(self.device)
-        out_label = torch.tensor(self.label[idx], dtype=torch.long).to(self.device)
-        return out_data, out_label
+        if self.transform_function:
+            out_data = torch.tensor(self.transforms(self.data[idx]), dtype=torch.long).to(self.device)
+        else:
+            out_data = torch.tensor(self.data[idx], dtype=torch.long).to(self.device)
+        if self.label is None:
+            return out_data
+        else:
+            out_label = torch.tensor(self.label[idx], dtype=torch.long).to(self.device)
+            return out_data, out_label
 
 
 class ParameterManager:
@@ -228,6 +243,7 @@ class TransformerSequenceClassifier:
         # model setup
         _, num_labels = get_dataset(self.param('dataset'))
         model_seq_cls_class = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')]
+        self.token_encoder = TokenEncoder(self.param('transformer'))
         self.model_seq_cls = model_seq_cls_class.from_pretrained(
             self.param('transformer'), cache_dir=CACHE_DIR, num_labels=num_labels)
 
@@ -302,27 +318,33 @@ class TransformerSequenceClassifier:
         for k, v in self.param.parameter.items():
             LOGGER.debug(' - [param] %s: %s' % (k, str(v)))
 
-    def predict(self, x):
-        pass
-        # outputs = self.model_seq_cls(inputs, outputs)
-        # loss, logit = outputs[0:2]
+    def predict(self, x: list):
+        data_loader = torch.utils.data.DataLoader(
+            Dataset(x, transform_function=self.token_encoder, device=self.device), batch_size=1)
+        prediction = []
+        for i in data_loader:
+            outputs = self.model_seq_cls(i)
+            loss, logit = outputs[0:2]
+            _, pred = torch.max(logit, 1)
+            prediction.append(pred.cpu().item())
+        return prediction
 
     def train(self):
 
         # setup data loader
         dataset_split, _ = get_dataset(self.param('dataset'))
         data_loader_train = torch.utils.data.DataLoader(
-            Dataset(*dataset_split[0], transformer=self.param('transformer'), device=self.device),
+            Dataset(*dataset_split[0], transform_function=self.token_encoder, device=self.device),
             batch_size=self.param('batch_size'),
             shuffle=True,
             num_workers=NUM_WORKER,
             drop_last=True)
         data_loader_valid = torch.utils.data.DataLoader(
-            Dataset(*dataset_split[1], transformer=self.param('transformer'), device=self.device),
+            Dataset(*dataset_split[1], transform_function=self.token_encoder, device=self.device),
             batch_size=self.param('batch_size'))
         if len(dataset_split) > 2:
             data_loader_test = torch.utils.data.DataLoader(
-                Dataset(*dataset_split[1], transformer=self.param('transformer'), device=self.device),
+                Dataset(*dataset_split[1], transform_function=self.token_encoder, device=self.device),
                 batch_size=self.param('batch_size'))
         else:
             data_loader_test = None
@@ -471,10 +493,15 @@ if __name__ == '__main__':
         tolerance=opt.tolerance,
         weight_decay=opt.weight_decay
     )
-    if opt.inference_mode:
+    if not opt.inference_mode:
         classifier.train()
     else:
-        pass
-        
-        # classifier.predict()
+        while True:
+            inp = input('input sentence >>>')
+            if inp == 'q':
+                break
+            elif inp == '':
+                continue
+            else:
+                print(classifier.predict([inp]))
 
