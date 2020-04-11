@@ -469,6 +469,7 @@ def get_options():
     parser.add_argument('--optimizer', help='optimizer', default='adamw', type=str)
     parser.add_argument('--scheduler', help='scheduler', default='linear', type=str)
     parser.add_argument('--total-step', help='total training step', default=100000, type=int)
+    parser.add_argument('--batch-size', help='batch size', default=64, type=int)
     parser.add_argument('--warmup-step', help='warmup step', default=5000, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=1e-7, type=float)
     parser.add_argument('--tolerance', help='tolerance for valid loss', default=None, type=float)
@@ -491,7 +492,8 @@ if __name__ == '__main__':
         total_step=opt.total_step,
         warmup_step=opt.warmup_step,
         tolerance=opt.tolerance,
-        weight_decay=opt.weight_decay
+        weight_decay=opt.weight_decay,
+        batch_size=opt.batch_size
     )
     if not opt.inference_mode:
         classifier.train()
