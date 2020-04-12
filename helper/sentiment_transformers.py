@@ -111,6 +111,7 @@ class TokenEncoder:
 
     def __init__(self, transformer: str):
         self.tokenizer = VALID_TOKENIZER[transformer].from_pretrained(transformer, cache_dir=CACHE_DIR)
+        LOGGER.info('max_sequence_length: %i' % self.tokenizer.max_len)
 
     def __call__(self, text):
         token_ids = self.tokenizer.encode(text)
@@ -166,8 +167,7 @@ class ParameterManager:
         checkpoint: existing checkpoint name if you want to load
         kwargs: model parameters
         """
-        self.prefix = prefix
-        self.checkpoint_dir, self.parameter = self.__versioning(kwargs, checkpoint)
+        self.checkpoint_dir, self.parameter = self.__versioning(kwargs, checkpoint, prefix)
         LOGGER.info('checkpoint: %s' % self.checkpoint_dir)
         for k, v in self.parameter.items():
             LOGGER.info(' - [param] %s: %s' % (k, str(v)))
@@ -178,20 +178,11 @@ class ParameterManager:
             raise ValueError('unknown parameter %s' % key)
         return self.parameter[key]
 
-    @staticmethod
-    def random_string(string_length=10, exceptions: list = None):
-        """ Generate a random string of fixed length """
-        while True:
-            letters = string.ascii_lowercase
-            random_letters = ''.join(random.choice(letters) for i in range(string_length))
-            if exceptions is None or random_letters not in exceptions:
-                break
-        return random_letters
-
     def remove_ckpt(self):
-        shutil.rmtree()
+        shutil.rmtree(self.checkpoint_dir)
 
-    def __versioning(self, parameter: dict = None, checkpoint: str = None):
+    @staticmethod
+    def __versioning(parameter: dict = None, checkpoint: str = None, prefix: str = None):
         """ Checkpoint versioner: Either of `config` or `checkpoint` need to be specified (`config` has priority)
 
          Parameter
@@ -204,6 +195,16 @@ class ParameterManager:
         path_to_checkpoint: path to new checkpoint dir
         parameter: parameter
         """
+
+        def random_string(string_length=10, exceptions: list = None):
+            """ Generate a random string of fixed length """
+            while True:
+                letters = string.ascii_lowercase
+                random_letters = ''.join(random.choice(letters) for i in range(string_length))
+                if exceptions is None or random_letters not in exceptions:
+                    break
+            return random_letters
+
         if checkpoint is None and parameter is None:
             raise ValueError('either of `checkpoint` or `parameter` is needed.')
 
@@ -224,9 +225,9 @@ class ParameterManager:
                     else:
                         exit()
 
-            new_checkpoint = self.random_string(exceptions=version_name)
-            if self.prefix:
-                new_checkpoint = '_'.join([self.prefix, new_checkpoint])
+            new_checkpoint = random_string(exceptions=version_name)
+            if prefix:
+                new_checkpoint = '_'.join([prefix, new_checkpoint])
             new_checkpoint_path = os.path.join(CKPT_DIR, new_checkpoint)
             os.makedirs(new_checkpoint_path, exist_ok=True)
             with open(os.path.join(new_checkpoint_path, 'hyperparameters.json'), 'w') as _f:
@@ -384,6 +385,7 @@ class TransformerSequenceClassifier:
 
         if self.__best_val_loss is None:
             exit('nothing to be saved')
+            self.param.remove_ckpt()
 
         LOGGER.info('[training completed] best model: valid loss %0.3f at step %i'
                     % (self.__best_val_loss, self.__best_val_loss_step))
@@ -447,20 +449,20 @@ class TransformerSequenceClassifier:
     def __epoch_valid(self, data_loader, prefix: str='valid'):
         """ validation/test """
         self.model_seq_cls.eval()
-        accuracy, loss = [], []
+        list_accuracy, list_loss = [], []
 
         for inputs, outputs in data_loader:
-            
+
             inputs = inputs.to(self.device)
             outputs = outputs.to(self.device)
 
             model_outputs = self.model_seq_cls(inputs, labels=outputs)
             loss, logit = model_outputs[0:2]
             _, pred = torch.max(logit, 1)
-            accuracy.append(((pred == outputs).cpu().float().mean()).item())
-            loss.append(loss.cpu().item())
+            list_accuracy.append(((pred == outputs).cpu().float().mean()).item())
+            list_loss.append(loss.cpu().item())
 
-        accuracy, loss = float(np.mean(accuracy)), float(np.mean(loss))
+        accuracy, loss = float(np.mean(list_accuracy)), float(np.mean(list_loss))
 
         self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
         self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
