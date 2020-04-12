@@ -428,7 +428,7 @@ class TransformerSequenceClassifier:
             inst_loss = loss.cpu().item()
             inst_lr = self.optimizer.param_groups[0]['lr']
             # log
-            self.writer.add_scalar('train/loss', inst_loss(), self.__step)
+            self.writer.add_scalar('train/loss', inst_loss, self.__step)
             self.writer.add_scalar('train/accuracy', inst_accuracy, self.__step)
             self.writer.add_scalar('learning_rate', inst_lr, self.__step)
 
