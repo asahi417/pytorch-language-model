@@ -450,6 +450,10 @@ class TransformerSequenceClassifier:
         accuracy, loss = [], []
 
         for inputs, outputs in data_loader:
+            
+            inputs = inputs.to(self.device)
+            outputs = outputs.to(self.device)
+
             model_outputs = self.model_seq_cls(inputs, labels=outputs)
             loss, logit = model_outputs[0:2]
             _, pred = torch.max(logit, 1)
