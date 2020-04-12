@@ -188,6 +188,9 @@ class ParameterManager:
                 break
         return random_letters
 
+    def remove_ckpt(self):
+        shutil.rmtree()
+
     def __versioning(self, parameter: dict = None, checkpoint: str = None):
         """ Checkpoint versioner: Either of `config` or `checkpoint` need to be specified (`config` has priority)
 
@@ -265,7 +268,6 @@ class TransformerSequenceClassifier:
         _, num_labels = get_dataset(self.param('dataset'))
         model_seq_cls_class = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')]
         self.token_encoder = TokenEncoder(self.param('transformer'))
-        print(num_labels)
         self.model_seq_cls = model_seq_cls_class.from_pretrained(
             self.param('transformer'), cache_dir=CACHE_DIR, num_labels=num_labels)
 
@@ -410,11 +412,9 @@ class TransformerSequenceClassifier:
             # zero the parameter gradients
             self.optimizer.zero_grad()
             # forward: output prediction and get loss
-            print(outputs)
-            outputs = self.model_seq_cls(inputs, labels=outputs)
-            loss, logit = outputs[0:2]
-            print(logit.shape, logit)
-            _, pred = torch.max(logit.cpu(), 1)
+            model_outputs = self.model_seq_cls(inputs, labels=outputs)
+            loss, logit = model_outputs[0:2]
+            _, pred = torch.max(logit, 1)
             # backward: calculate gradient
             loss.backward()
             # gradient clip
@@ -450,8 +450,8 @@ class TransformerSequenceClassifier:
         accuracy, loss = [], []
 
         for inputs, outputs in data_loader:
-            outputs = self.model_seq_cls(inputs, labels=outputs)
-            loss, logit = outputs[0:2]
+            model_outputs = self.model_seq_cls(inputs, labels=outputs)
+            loss, logit = model_outputs[0:2]
             _, pred = torch.max(logit, 1)
             accuracy.append(((pred == outputs).cpu().float().mean()).item())
             loss.append(loss.cpu().item())
@@ -517,11 +517,11 @@ if __name__ == '__main__':
         classifier.train()
     else:
         while True:
-            inp = input('input sentence >>>')
-            if inp == 'q':
+            _inp = input('input sentence >>>')
+            if _inp == 'q':
                 break
-            elif inp == '':
+            elif _inp == '':
                 continue
             else:
-                print(classifier.predict([inp]))
+                print(classifier.predict([_inp]))
 
