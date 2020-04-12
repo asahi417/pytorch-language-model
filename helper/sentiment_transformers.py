@@ -409,9 +409,10 @@ class TransformerSequenceClassifier:
             # zero the parameter gradients
             self.optimizer.zero_grad()
             # forward: output prediction and get loss
+            print(inputs.shape, outputs.shape)
             outputs = self.model_seq_cls(inputs, labels=outputs)
             loss, logit = outputs[0:2]
-            print(loss.shape)
+            print(logit.shape, logit)
             _, pred = torch.max(logit.cpu(), 1)
             # backward: calculate gradient
             loss.backward()
