@@ -410,7 +410,7 @@ class TransformerSequenceClassifier:
             # zero the parameter gradients
             self.optimizer.zero_grad()
             # forward: output prediction and get loss
-            print(inputs.shape, outputs.shape)
+            print(outputs)
             outputs = self.model_seq_cls(inputs, labels=outputs)
             loss, logit = outputs[0:2]
             print(logit.shape, logit)
