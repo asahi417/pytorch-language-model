@@ -45,9 +45,11 @@ CACHE_DIR = os.getenv("CACHE_DIR", './cache')
 CKPT_DIR = os.getenv("CKPT_DIR", './ckpt')
 VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION = {
     'xlm-roberta-large': transformers.XLMRobertaForSequenceClassification,
+    'xlm-roberta-base': transformers.XLMRobertaForSequenceClassification,
     'bert-base-multilingual-cased': transformers.BertForSequenceClassification}
 VALID_TOKENIZER = {
     'xlm-roberta-large': transformers.XLMRobertaTokenizer,
+    'xlm-roberta-base': transformers.XLMRobertaTokenizer,
     'bert-base-multilingual-cased': transformers.BertTokenizer}
 
 
@@ -167,6 +169,8 @@ class ParameterManager:
         self.prefix = prefix
         self.checkpoint_dir, self.parameter = self.__versioning(kwargs, checkpoint)
         LOGGER.info('checkpoint: %s' % self.checkpoint_dir)
+        for k, v in self.parameter.items():
+            LOGGER.info(' - [param] %s: %s' % (k, str(v)))
 
     def __call__(self, key):
         """ retrieve a parameter """
@@ -323,17 +327,6 @@ class TransformerSequenceClassifier:
 
         # log
         self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
-        self.show_config()
-
-    def show_config(self):
-        model_size = 0
-        for k, v in self.model_seq_cls.__dict__['_modules'].items():
-            if hasattr(v, 'weight'):
-                model_size += np.prod(v.weight.shape)
-                LOGGER.info(' - [weight size] %s: %s' % (k, str(list(v.weight.shape))))
-        LOGGER.info(' - %i variables in total' % model_size)
-        for k, v in self.param.parameter.items():
-            LOGGER.info(' - [param] %s: %s' % (k, str(v)))
 
     def predict(self, x: list):
         data_loader = torch.utils.data.DataLoader(
@@ -418,7 +411,8 @@ class TransformerSequenceClassifier:
             # forward: output prediction and get loss
             outputs = self.model_seq_cls(inputs, labels=outputs)
             loss, logit = outputs[0:2]
-            _, pred = torch.max(logit, 1)
+            print(loss.shape)
+            _, pred = torch.max(logit.cpu(), 1)
             # backward: calculate gradient
             loss.backward()
             # gradient clip
@@ -428,7 +422,7 @@ class TransformerSequenceClassifier:
             self.optimizer.step()
             self.scheduler.step()
             # instantaneous accuracy, loss, and learning rate
-            inst_accuracy = ((pred == outputs).cpu().float().mean()).item()
+            inst_accuracy = ((pred == outputs.cpu()).cpu().float().mean()).item()
             inst_loss = loss.cpu().item()
             inst_lr = self.optimizer.param_groups[0]['lr']
             # log
