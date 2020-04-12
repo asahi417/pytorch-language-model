@@ -244,6 +244,7 @@ class TransformerSequenceClassifier:
     def __init__(self,
                  dataset: str,
                  checkpoint: str=None,
+                 # load_best_model: bool=False,
                  **kwargs):
         LOGGER.info('*** initialize network ***')
 
@@ -262,7 +263,6 @@ class TransformerSequenceClassifier:
         self.token_encoder = TokenEncoder(self.param('transformer'))
         self.model_seq_cls = model_seq_cls_class.from_pretrained(
             self.param('transformer'), cache_dir=CACHE_DIR, num_labels=num_labels)
-        self.model_seq_cls.train()
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
@@ -337,10 +337,10 @@ class TransformerSequenceClassifier:
 
     def predict(self, x: list):
         data_loader = torch.utils.data.DataLoader(
-            Dataset(x, transform_function=self.token_encoder, device=self.device), batch_size=1)
+            Dataset(x, transform_function=self.token_encoder), batch_size=1)
         prediction = []
         for i in data_loader:
-            outputs = self.model_seq_cls(i)
+            outputs = self.model_seq_cls(i.to(self.device))
             loss, logit = outputs[0:2]
             _, pred = torch.max(logit, 1)
             prediction.append(pred.cpu().item())
@@ -380,7 +380,6 @@ class TransformerSequenceClassifier:
                     self.__epoch += 1
 
         except RuntimeError:
-            print('fuck')
             LOGGER.info(traceback.format_exc())
             LOGGER.info('*** RuntimeError (NaN found, see above log in detail) ***')
 
@@ -417,7 +416,7 @@ class TransformerSequenceClassifier:
             # zero the parameter gradients
             self.optimizer.zero_grad()
             # forward: output prediction and get loss
-            outputs = self.model_seq_cls(inputs, outputs)
+            outputs = self.model_seq_cls(inputs, labels=outputs)
             loss, logit = outputs[0:2]
             _, pred = torch.max(logit, 1)
             # backward: calculate gradient
@@ -455,7 +454,7 @@ class TransformerSequenceClassifier:
         accuracy, loss = [], []
 
         for inputs, outputs in data_loader:
-            outputs = self.model_seq_cls(inputs, outputs)
+            outputs = self.model_seq_cls(inputs, labels=outputs)
             loss, logit = outputs[0:2]
             _, pred = torch.max(logit, 1)
             accuracy.append(((pred == outputs).cpu().float().mean()).item())
@@ -475,7 +474,7 @@ class TransformerSequenceClassifier:
             loss_margin = loss - self.__best_val_loss
             if self.param('tolerance') is not None and self.param('tolerance') < loss_margin:
                 LOGGER.info('early stop as loss exceeds tolerance: %0.2f < %0.2f '
-                             % (self.param('tolerance'), loss_margin))
+                            % (self.param('tolerance'), loss_margin))
                 return True
         return False
 
