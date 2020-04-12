@@ -67,7 +67,7 @@ def get_dataset(data_name: str = 'sst'):
         list_label = []
         for i in iterator:
             if i.label not in label_dict.keys():
-                label_dict[i.label] = len(label_dict) + 1
+                label_dict[i.label] = len(label_dict)
             list_text.append(' '.join(i.text))
             list_label.append(str(label_dict[i.label]))
 
