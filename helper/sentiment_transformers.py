@@ -424,7 +424,7 @@ class TransformerSequenceClassifier:
             self.optimizer.step()
             self.scheduler.step()
             # instantaneous accuracy, loss, and learning rate
-            inst_accuracy = ((pred == outputs.cpu()).cpu().float().mean()).item()
+            inst_accuracy = ((pred == outputs).cpu().float().mean()).item()
             inst_loss = loss.cpu().item()
             inst_lr = self.optimizer.param_groups[0]['lr']
             # log
