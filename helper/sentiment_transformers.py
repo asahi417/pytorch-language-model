@@ -332,6 +332,10 @@ class TransformerSequenceClassifier:
         # log
         self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
 
+    def release_cache(self):
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+
     def predict(self, x: list):
         data_loader = torch.utils.data.DataLoader(
             Dataset(x, transform_function=self.token_encoder), batch_size=1)
@@ -368,8 +372,13 @@ class TransformerSequenceClassifier:
         try:
             with detect_anomaly():
                 while True:
+
+                    self.release_cache()
                     if_training_finish = self.__epoch_train(data_loader_train)
+
+                    self.release_cache()
                     if_early_stop = self.__epoch_valid(data_loader_valid, prefix='valid')
+
                     if if_training_finish or if_early_stop:
                         if data_loader_test:
                             self.__epoch_valid(data_loader_valid, prefix='test')
@@ -436,7 +445,7 @@ class TransformerSequenceClassifier:
 
             if self.__step % PROGRESS_INTERVAL == 0:
                 LOGGER.info(' * (step %i) accuracy: %.3f, loss: %.3f, lr: %0.6f'
-                             % (self.__step, inst_accuracy, inst_loss, inst_lr))
+                            % (self.__step, inst_accuracy, inst_loss, inst_lr))
 
             self.__step += 1
 
