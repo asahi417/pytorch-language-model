@@ -47,7 +47,7 @@ dictConfig(
 )
 LOGGER = logging.getLogger()
 NUM_WORKER = int(os.getenv("NUM_WORKER", '4'))
-PROGRESS_INTERVAL = int(os.getenv("PROGRESS_INTERVAL", '500'))
+PROGRESS_INTERVAL = int(os.getenv("PROGRESS_INTERVAL", '100'))
 CACHE_DIR = os.getenv("CACHE_DIR", './cache')
 CKPT_DIR = os.getenv("CKPT_DIR", './ckpt')
 VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION = {
@@ -267,14 +267,15 @@ class TransformerSequenceClassifier:
 
     def __init__(self,
                  dataset: str,
-                 checkpoint: str=None,
-                 # load_best_model: bool=False,
+                 batch_size_validation: int = None,
+                 checkpoint: str = None,
                  **kwargs):
         LOGGER.info('*** initialize network ***')
 
         # checkpoint versioning
         self.param = ParameterManager(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
         self.checkpoint_model = os.path.join(self.param.checkpoint_dir, 'model.pt')
+        self.batch_size_validation = batch_size_validation if batch_size_validation else self.param('batch_size')
 
         # fix random seed
         random.seed(self.param('random_seed'))
@@ -378,7 +379,7 @@ class TransformerSequenceClassifier:
             drop_last=True)
         data_loader_valid = torch.utils.data.DataLoader(
             Dataset(*dataset_split[1], transform_function=self.token_encoder),
-            batch_size=1,
+            batch_size=self.batch_size_validation,
             num_workers=NUM_WORKER)
         if len(dataset_split) > 2:
             data_loader_test = torch.utils.data.DataLoader(
@@ -452,6 +453,7 @@ class TransformerSequenceClassifier:
             loss, logit = model_outputs[0:2]
 
             if self.data_parallel:
+                print(loss.shape)
                 loss = torch.mean(loss)
 
             _, pred = torch.max(logit, 1)
@@ -496,6 +498,9 @@ class TransformerSequenceClassifier:
 
             model_outputs = self.model_seq_cls(inputs, labels=outputs)
             loss, logit = model_outputs[0:2]
+            if self.data_parallel:
+                print(loss.shape)
+                loss = torch.mean(loss)
             _, pred = torch.max(logit, 1)
             list_accuracy.append(((pred == outputs).cpu().float().mean()).item())
             list_loss.append(loss.cpu().item())
@@ -538,12 +543,13 @@ def get_options():
     parser.add_argument('--random-seed', help='random seed', default=1234, type=int)
     parser.add_argument('--lr', help='learning rate', default=2e-5, type=float)
     parser.add_argument('--clip', help='gradient clip', default=None, type=float)
-    parser.add_argument('--optimizer', help='optimizer', default='adamw', type=str)
+    parser.add_argument('--optimizer', help='optimizer', default='adam', type=str)
     parser.add_argument('--scheduler', help='scheduler', default='linear', type=str)
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
     parser.add_argument('--batch-size', help='batch size', default=16, type=int)
+    parser.add_argument('--batch-size-validation', help='batch size for validation', default=4, type=int)
     parser.add_argument('--warmup-step', help='warmup step', default=700, type=int)  # 6% of total step recommended
-    parser.add_argument('--weight-decay', help='weight decay', default=1e-7, type=float)
+    parser.add_argument('--weight-decay', help='weight decay', default=None, type=float)
     parser.add_argument('--tolerance', help='tolerance for valid loss', default=None, type=float)
     parser.add_argument('--checkpoint', help='checkpoint to load', default=None, type=str)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
@@ -553,6 +559,7 @@ def get_options():
 if __name__ == '__main__':
     opt = get_options()
     classifier = TransformerSequenceClassifier(
+        batch_size_validation=opt.batch_size_validation,
         checkpoint=opt.checkpoint,
         dataset=opt.data,
         transformer=opt.transformer,
