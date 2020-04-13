@@ -287,9 +287,11 @@ class TransformerSequenceClassifier:
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
+        self.data_parallel = False
         if self.n_gpu == 1:
             self.model_seq_cls = self.model_seq_cls.cuda()
         elif self.n_gpu > 1:
+            self.data_parallel = True
             self.model_seq_cls = torch.nn.DataParallel(self.model_seq_cls.cuda())
         else:
             self.n_gpu = 0
@@ -373,8 +375,8 @@ class TransformerSequenceClassifier:
             drop_last=True)
         data_loader_valid = torch.utils.data.DataLoader(
             Dataset(*dataset_split[1], transform_function=self.token_encoder),
-            batch_size=1)
-            # batch_size=self.param('batch_size'))
+            batch_size=1,
+            num_workers=NUM_WORKER)
         if len(dataset_split) > 2:
             data_loader_test = torch.utils.data.DataLoader(
                 Dataset(*dataset_split[1], transform_function=self.token_encoder),
@@ -407,13 +409,19 @@ class TransformerSequenceClassifier:
             LOGGER.info('*** KeyboardInterrupt ***')
 
         if self.__best_val_loss is None:
-            exit('nothing to be saved')
             self.param.remove_ckpt()
+            exit('nothing to be saved')
 
         LOGGER.info('[training completed] best model: valid loss %0.3f at step %i'
                     % (self.__best_val_loss, self.__best_val_loss_step))
+
+        if self.data_parallel:
+            model_wts = self.model_seq_cls.module.state_dict()
+        else:
+            model_wts = self.model_seq_cls.state_dict()
+
         torch.save({
-            'model_state_dict': self.model_seq_cls.state_dict(),
+            'model_state_dict': model_wts,
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'step': self.__step,
@@ -439,6 +447,11 @@ class TransformerSequenceClassifier:
             # forward: output prediction and get loss
             model_outputs = self.model_seq_cls(inputs, labels=outputs)
             loss, logit = model_outputs[0:2]
+
+            if self.data_parallel:
+                loss = torch.mean(loss)
+                print(logit)
+
             _, pred = torch.max(logit, 1)
             # backward: calculate gradient
             loss.backward()
@@ -458,7 +471,7 @@ class TransformerSequenceClassifier:
             self.writer.add_scalar('learning_rate', inst_lr, self.__step)
 
             if self.__step % PROGRESS_INTERVAL == 0:
-                LOGGER.info(' * (step %i) accuracy: %.3f, loss: %.3f, lr: %0.6f'
+                LOGGER.info(' * (step %i) accuracy: %.3f, loss: %.3f, lr: %0.8f'
                             % (self.__step, inst_accuracy, inst_loss, inst_lr))
 
             self.__step += 1
@@ -494,7 +507,10 @@ class TransformerSequenceClassifier:
         if self.__best_val_loss is None or loss < self.__best_val_loss:
             self.__best_val_loss = loss
             self.__best_val_loss_step = self.__step
-            self.__best_model_wts = copy.deepcopy(self.model_seq_cls.state_dict())
+            if self.data_parallel:
+                self.__best_model_wts = copy.deepcopy(self.model_seq_cls.module.state_dict())
+            else:
+                self.__best_model_wts = copy.deepcopy(self.model_seq_cls.state_dict())
         else:
             loss_margin = loss - self.__best_val_loss
             if self.param('tolerance') is not None and self.param('tolerance') < loss_margin:
