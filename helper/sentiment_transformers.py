@@ -58,6 +58,7 @@ VALID_TOKENIZER = {
     'xlm-roberta-large': transformers.XLMRobertaTokenizer,
     'xlm-roberta-base': transformers.XLMRobertaTokenizer,
     'bert-base-multilingual-cased': transformers.BertTokenizer}
+assert set(VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION.keys()) == set(VALID_TOKENIZER.keys())
 
 
 def get_dataset(data_name: str = 'sst'):
@@ -116,16 +117,21 @@ def get_dataset(data_name: str = 'sst'):
 class TokenEncoder:
     """ Token encoder with transformers tokenizer """
 
-    def __init__(self, transformer: str):
+    def __init__(self,
+                 transformer: str,
+                 max_seq_length: int = None):
         self.tokenizer = VALID_TOKENIZER[transformer].from_pretrained(transformer, cache_dir=CACHE_DIR)
-        LOGGER.info('max_sequence_length: %i' % self.tokenizer.max_len)
+        if max_seq_length and max_seq_length > self.tokenizer.max_len:
+            raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
+        self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
+        LOGGER.info('max_sequence_length: %i' % self.max_seq_length)
 
     def __call__(self, text):
         token_ids = self.tokenizer.encode(text)
-        if self.tokenizer.max_len <= len(token_ids):
-            token_ids = token_ids[:self.tokenizer.max_len]
+        if self.max_seq_length <= len(token_ids):
+            token_ids = token_ids[:self.max_seq_length]
         else:
-            token_ids = token_ids + [self.tokenizer.pad_token_id] * (self.tokenizer.max_len - len(token_ids))
+            token_ids = token_ids + [self.tokenizer.pad_token_id] * (self.max_seq_length - len(token_ids))
         return token_ids
 
 
@@ -503,15 +509,22 @@ def get_options():
         description='finetune transformers to sentiment analysis',
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('--data', help='data (imdb/sst)', default='sst', type=str)
-    parser.add_argument('--transformer', help='language model', default='xlm-roberta-large', type=str)
+    parser.add_argument('--transformer',
+                        help='language model (%s)' % str(VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION.keys()),
+                        default='xlm-roberta-base',
+                        type=str)
+    parser.add_argument('--max-seq-length',
+                        help='max sequence length (use same length as used in pre-training if not provided)',
+                        default=None,
+                        type=int)
     parser.add_argument('--random-seed', help='random seed', default=1234, type=int)
-    parser.add_argument('--lr', help='learning rate', default=0.2, type=float)
+    parser.add_argument('--lr', help='learning rate', default=2e-5, type=float)
     parser.add_argument('--clip', help='gradient clip', default=None, type=float)
     parser.add_argument('--optimizer', help='optimizer', default='adamw', type=str)
     parser.add_argument('--scheduler', help='scheduler', default='linear', type=str)
-    parser.add_argument('--total-step', help='total training step', default=100000, type=int)
-    parser.add_argument('--batch-size', help='batch size', default=64, type=int)
-    parser.add_argument('--warmup-step', help='warmup step', default=5000, type=int)
+    parser.add_argument('--total-step', help='total training step', default=13000, type=int)
+    parser.add_argument('--batch-size', help='batch size', default=16, type=int)
+    parser.add_argument('--warmup-step', help='warmup step', default=700, type=int)  # 6% of total step recommended
     parser.add_argument('--weight-decay', help='weight decay', default=1e-7, type=float)
     parser.add_argument('--tolerance', help='tolerance for valid loss', default=None, type=float)
     parser.add_argument('--checkpoint', help='checkpoint to load', default=None, type=str)
@@ -534,7 +547,8 @@ if __name__ == '__main__':
         warmup_step=opt.warmup_step,
         tolerance=opt.tolerance,
         weight_decay=opt.weight_decay,
-        batch_size=opt.batch_size
+        batch_size=opt.batch_size,
+        max_seq_length=opt.max_seq_length
     )
     if not opt.inference_mode:
         classifier.train()
