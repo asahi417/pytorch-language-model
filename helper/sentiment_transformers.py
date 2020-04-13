@@ -389,10 +389,10 @@ class TransformerSequenceClassifier:
             with detect_anomaly():
                 while True:
 
-                    self.release_cache()
+                    # self.release_cache()
                     if_training_finish = self.__epoch_train(data_loader_train)
 
-                    self.release_cache()
+                    # self.release_cache()
                     if_early_stop = self.__epoch_valid(data_loader_valid, prefix='valid')
 
                     if if_training_finish or if_early_stop:
