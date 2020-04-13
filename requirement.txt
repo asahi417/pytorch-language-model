@@ -5,3 +5,5 @@ tokenizers
 pillow==6.2.1
 toml>=0.10.0
 tensorboard>=1.14
+nltk
+transformers
