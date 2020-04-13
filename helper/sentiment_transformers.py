@@ -549,7 +549,7 @@ def get_options():
     parser.add_argument('--batch-size', help='batch size', default=16, type=int)
     parser.add_argument('--batch-size-validation', help='batch size for validation', default=4, type=int)
     parser.add_argument('--warmup-step', help='warmup step', default=700, type=int)  # 6% of total step recommended
-    parser.add_argument('--weight-decay', help='weight decay', default=None, type=float)
+    parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
     parser.add_argument('--tolerance', help='tolerance for valid loss', default=None, type=float)
     parser.add_argument('--checkpoint', help='checkpoint to load', default=None, type=str)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
