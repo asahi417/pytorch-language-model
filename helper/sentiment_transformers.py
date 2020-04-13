@@ -443,10 +443,6 @@ class TransformerSequenceClassifier:
 
         for i, (inputs, attn_mask, outputs) in enumerate(data_loader, 1):
 
-            print(inputs)
-            print(outputs)
-            exit()
-
             inputs = inputs.to(self.device)
             attn_mask = attn_mask.to(self.device)
             outputs = outputs.to(self.device)
