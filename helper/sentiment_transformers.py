@@ -281,7 +281,7 @@ class TransformerSequenceClassifier:
         # model setup
         _, num_labels = get_dataset(self.param('dataset'))
         model_seq_cls_class = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')]
-        self.token_encoder = TokenEncoder(self.param('transformer'))
+        self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
         self.model_seq_cls = model_seq_cls_class.from_pretrained(
             self.param('transformer'), cache_dir=CACHE_DIR, num_labels=num_labels)
 
