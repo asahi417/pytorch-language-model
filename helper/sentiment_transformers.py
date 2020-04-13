@@ -450,7 +450,6 @@ class TransformerSequenceClassifier:
 
             if self.data_parallel:
                 loss = torch.mean(loss)
-                print(logit)
 
             _, pred = torch.max(logit, 1)
             # backward: calculate gradient
