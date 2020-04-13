@@ -1,4 +1,11 @@
-""" sentiment analysis model fintuning on hugginface.transformers """
+""" sentiment analysis model finetuning on hugginface.transformers
+
+- checkpoint managers: different ckpt id will be given to different configuration
+- dataset: sst/imdb dataset will be automatically fetched from source and compile as DataLoader
+- multiGPU support
+- command line interface for testing inference
+"""
+
 import copy
 import traceback
 import argparse
@@ -360,7 +367,8 @@ class TransformerSequenceClassifier:
             drop_last=True)
         data_loader_valid = torch.utils.data.DataLoader(
             Dataset(*dataset_split[1], transform_function=self.token_encoder),
-            batch_size=self.param('batch_size'))
+            batch_size=1)
+            # batch_size=self.param('batch_size'))
         if len(dataset_split) > 2:
             data_loader_test = torch.utils.data.DataLoader(
                 Dataset(*dataset_split[1], transform_function=self.token_encoder),
