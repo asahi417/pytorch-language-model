@@ -74,6 +74,8 @@ def get_dataset(data_name: str = 'sst'):
         list_text = []
         list_label = []
         for i in iterator:
+            if data_name == 'sst' and i.label == 'neutral':
+                continue
             if i.label not in label_dict.keys():
                 label_dict[i.label] = len(label_dict)
             list_text.append(' '.join(i.text))
@@ -107,6 +109,7 @@ def get_dataset(data_name: str = 'sst'):
         if data is None:
             _, data = decode_data(it, file_prefix=_file_prefix, label_dict=label_dictionary)
         data_split.append(data)
+        LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data[0])))
 
     with open(os.path.join(CACHE_DIR, data_name, 'label.json'), 'w') as f:
         json.dump(label_dictionary, f)
@@ -457,7 +460,7 @@ class TransformerSequenceClassifier:
             # gradient clip
             if self.param('clip') is not None:
                 nn.utils.clip_grad_norm_(self.model_seq_cls.parameters(), self.param('clip'))
-            # optimizer and scheuler step
+            # optimizer and scheduler step
             self.optimizer.step()
             self.scheduler.step()
             # instantaneous accuracy, loss, and learning rate
