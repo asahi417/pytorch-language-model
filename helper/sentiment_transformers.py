@@ -133,9 +133,12 @@ class TokenEncoder:
         token_ids = self.tokenizer.encode(text)
         if self.max_seq_length <= len(token_ids):
             token_ids = token_ids[:self.max_seq_length]
+            attention_mask = [1] * self.max_seq_length
         else:
             token_ids = token_ids + [self.tokenizer.pad_token_id] * (self.max_seq_length - len(token_ids))
-        return token_ids
+            attention_mask = [1] * len(token_ids) + [0] * (self.max_seq_length - len(token_ids))
+
+        return token_ids, attention_mask
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -143,28 +146,27 @@ class Dataset(torch.utils.data.Dataset):
 
     def __init__(self,
                  data: list,
-                 label: list=None,
-                 transform_function=None):
+                 token_encoder,
+                 label: list=None):
         self.data = data
         if label is None:
             self.label = None
         else:
             self.label = [int(l) for l in label]
-        self.transform_function = transform_function
+        self.token_encoder = token_encoder
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        if self.transform_function:
-            out_data = torch.tensor(self.transform_function(self.data[idx]), dtype=torch.long)
-        else:
-            out_data = torch.tensor(self.data[idx], dtype=torch.long)
+        token_ids, attention_mask = self.token_encoder(self.data[idx])
+        out_data = torch.tensor(token_ids, dtype=torch.long)
+        attention_mask = torch.tensor(attention_mask, dtype=torch.float32)
         if self.label is None:
-            return out_data
+            return out_data, attention_mask
         else:
             out_label = torch.tensor(self.label[idx], dtype=torch.long)
-            return out_data, out_label
+            return out_data, attention_mask, out_label
 
 
 class ParameterManager:
@@ -357,10 +359,12 @@ class TransformerSequenceClassifier:
 
     def predict(self, x: list):
         data_loader = torch.utils.data.DataLoader(
-            Dataset(x, transform_function=self.token_encoder), batch_size=1)
+            Dataset(x, token_encoder=self.token_encoder), batch_size=1)
         prediction = []
-        for i in data_loader:
-            outputs = self.model_seq_cls(i.to(self.device))
+        for inputs, attn_mask in data_loader:
+            inputs = inputs.to(self.device)
+            attn_mask = attn_mask.to(self.device)
+            outputs = self.model_seq_cls(inputs, attention_mask=attn_mask)
             loss, logit = outputs[0:2]
             _, pred = torch.max(logit, 1)
             prediction.append(pred.cpu().item())
@@ -372,18 +376,18 @@ class TransformerSequenceClassifier:
         LOGGER.info('setup dataset')
         dataset_split, _ = get_dataset(self.param('dataset'))
         data_loader_train = torch.utils.data.DataLoader(
-            Dataset(*dataset_split[0], transform_function=self.token_encoder),
+            Dataset(dataset_split[0][0], label=dataset_split[0][1], token_encoder=self.token_encoder),
             batch_size=self.param('batch_size'),
             shuffle=True,
             num_workers=NUM_WORKER,
             drop_last=True)
         data_loader_valid = torch.utils.data.DataLoader(
-            Dataset(*dataset_split[1], transform_function=self.token_encoder),
+            Dataset(dataset_split[1][0], label=dataset_split[1][1], token_encoder=self.token_encoder),
             batch_size=self.batch_size_validation,
             num_workers=NUM_WORKER)
         if len(dataset_split) > 2:
             data_loader_test = torch.utils.data.DataLoader(
-                Dataset(*dataset_split[1], transform_function=self.token_encoder),
+                Dataset(dataset_split[2][0], label=dataset_split[2][1], token_encoder=self.token_encoder),
                 batch_size=self.param('batch_size'))
         else:
             data_loader_test = None
@@ -441,19 +445,19 @@ class TransformerSequenceClassifier:
         """ train on single epoch return flag which is True if training has been completed """
         self.model_seq_cls.train()
 
-        for i, (inputs, outputs) in enumerate(data_loader, 1):
+        for i, (inputs, attn_mask, outputs) in enumerate(data_loader, 1):
 
             inputs = inputs.to(self.device)
+            attn_mask = attn_mask.to(self.device)
             outputs = outputs.to(self.device)
 
             # zero the parameter gradients
             self.optimizer.zero_grad()
             # forward: output prediction and get loss
-            model_outputs = self.model_seq_cls(inputs, labels=outputs)
+            model_outputs = self.model_seq_cls(inputs, attention_mask=attn_mask, labels=outputs)
             loss, logit = model_outputs[0:2]
 
             if self.data_parallel:
-                print(loss.shape)
                 loss = torch.mean(loss)
 
             _, pred = torch.max(logit, 1)
@@ -491,15 +495,15 @@ class TransformerSequenceClassifier:
         self.model_seq_cls.eval()
         list_accuracy, list_loss = [], []
 
-        for inputs, outputs in data_loader:
+        for inputs, attn_mask, outputs in data_loader:
 
             inputs = inputs.to(self.device)
+            attn_mask = attn_mask.to(self.device)
             outputs = outputs.to(self.device)
 
-            model_outputs = self.model_seq_cls(inputs, labels=outputs)
+            model_outputs = self.model_seq_cls(inputs, attention_mask=attn_mask, labels=outputs)
             loss, logit = model_outputs[0:2]
             if self.data_parallel:
-                print(loss.shape)
                 loss = torch.mean(loss)
             _, pred = torch.max(logit, 1)
             list_accuracy.append(((pred == outputs).cpu().float().mean()).item())
