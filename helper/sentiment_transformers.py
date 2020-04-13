@@ -130,14 +130,10 @@ class TokenEncoder:
         LOGGER.info('max_sequence_length: %i' % self.max_seq_length)
 
     def __call__(self, text):
-        token_ids = self.tokenizer.encode(text)
-        if self.max_seq_length <= len(token_ids):
-            token_ids = token_ids[:self.max_seq_length]
-            attention_mask = [1] * self.max_seq_length
-        else:
-            token_ids = token_ids + [self.tokenizer.pad_token_id] * (self.max_seq_length - len(token_ids))
-            attention_mask = [1] * len(token_ids) + [0] * (self.max_seq_length - len(token_ids))
-
+        # token_ids = self.tokenizer.encode(text)
+        tokens_dict = self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
+        token_ids = tokens_dict['input_ids']
+        attention_mask = tokens_dict['attention_mask']
         return token_ids, attention_mask
 
 
@@ -446,6 +442,10 @@ class TransformerSequenceClassifier:
         self.model_seq_cls.train()
 
         for i, (inputs, attn_mask, outputs) in enumerate(data_loader, 1):
+
+            print(inputs)
+            print(outputs)
+            exit()
 
             inputs = inputs.to(self.device)
             attn_mask = attn_mask.to(self.device)
