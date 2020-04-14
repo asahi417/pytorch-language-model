@@ -1,9 +1,10 @@
-""" sentiment analysis model finetuning on hugginface.transformers
+""" self-contained sentiment analysis model finetuning on hugginface.transformers
 
 - checkpoint managers: different ckpt id will be given to different configuration
 - dataset: sst/imdb dataset will be automatically fetched from source and compile as DataLoader
 - multiGPU support
 - command line interface for testing inference
+- see https://huggingface.co/transformers/_modules/transformers/optimization.html#AdamW for AdamW and linear scheduler
 """
 
 import copy
@@ -26,23 +27,12 @@ from torch.utils.tensorboard import SummaryWriter
 from glob import glob
 from logging.config import dictConfig
 
-import util_hf_optimizer
-
 dictConfig(
     dict(
         version=1,
-        formatters={
-            'f': {'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'}
-        },
-        handlers={
-            'h': {'class': 'logging.StreamHandler',
-                  'formatter': 'f',
-                  'level': logging.DEBUG}
-        },
-        root={
-            'handlers': ['h'],
-            'level': logging.DEBUG,
-        }
+        formatters={'f': {'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'}},
+        handlers={'h': {'class': 'logging.StreamHandler', 'formatter': 'f', 'level': logging.DEBUG}},
+        root={'handlers': ['h'], 'level': logging.DEBUG}
     )
 )
 LOGGER = logging.getLogger()
@@ -61,8 +51,11 @@ VALID_TOKENIZER = {
 assert set(VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION.keys()) == set(VALID_TOKENIZER.keys())
 
 
-def get_dataset(data_name: str = 'sst'):
+def get_dataset(data_name: str = 'sst',
+                get_label_dict_only: bool = False):
     """ download dataset file and return dictionary including training/validation split """
+    if get_label_dict_only:
+        return json.load(open(os.path.join(CACHE_DIR, data_name, 'label.json')))
 
     def decode_data(iterator, file_prefix, label_dict: dict):
         if os.path.exists(file_prefix + '.text') and os.path.exists(file_prefix + '.label'):
@@ -110,11 +103,107 @@ def get_dataset(data_name: str = 'sst'):
             _, data = decode_data(it, file_prefix=_file_prefix, label_dict=label_dictionary)
         data_split.append(data)
         LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data[0])))
+    return data_split, label_dictionary
 
-    with open(os.path.join(CACHE_DIR, data_name, 'label.json'), 'w') as f:
-        json.dump(label_dictionary, f)
-    num_labels = len(list(label_dictionary.keys()))
-    return data_split, num_labels
+
+def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
+    """ Create a schedule with a learning rate that decreases linearly after
+    linearly increasing during a warmup period.
+    """
+
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        return max(
+            0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps))
+        )
+
+    return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
+
+
+class AdamW(torch.optim.Optimizer):
+    """ Implements Adam algorithm with weight decay fix.
+
+    Parameters:
+        lr (float): learning rate. Default 1e-3.
+        betas (tuple of 2 floats): Adams beta parameters (b1, b2). Default: (0.9, 0.999)
+        eps (float): Adams epsilon. Default: 1e-6
+        weight_decay (float): Weight decay. Default: 0.0
+        correct_bias (bool): can be set to False to avoid correcting bias in Adam (e.g. like in Bert TF repository). Default True.
+    """
+
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-6, weight_decay=0.0, correct_bias=True):
+        if lr < 0.0:
+            raise ValueError("Invalid learning rate: {} - should be >= 0.0".format(lr))
+        if not 0.0 <= betas[0] < 1.0:
+            raise ValueError("Invalid beta parameter: {} - should be in [0.0, 1.0[".format(betas[0]))
+        if not 0.0 <= betas[1] < 1.0:
+            raise ValueError("Invalid beta parameter: {} - should be in [0.0, 1.0[".format(betas[1]))
+        if not 0.0 <= eps:
+            raise ValueError("Invalid epsilon value: {} - should be >= 0.0".format(eps))
+        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, correct_bias=correct_bias)
+        super().__init__(params, defaults)
+
+    def step(self, closure=None):
+        """Performs a single optimization step.
+
+        Arguments:
+            closure (callable, optional): A closure that reevaluates the model
+                and returns the loss.
+        """
+        loss = None
+        if closure is not None:
+            loss = closure()
+
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                grad = p.grad.data
+                if grad.is_sparse:
+                    raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
+
+                state = self.state[p]
+
+                # State initialization
+                if len(state) == 0:
+                    state["step"] = 0
+                    # Exponential moving average of gradient values
+                    state["exp_avg"] = torch.zeros_like(p.data)
+                    # Exponential moving average of squared gradient values
+                    state["exp_avg_sq"] = torch.zeros_like(p.data)
+
+                exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
+                beta1, beta2 = group["betas"]
+
+                state["step"] += 1
+
+                # Decay the first and second moment running average coefficient
+                # In-place operations to update the averages at the same time
+                exp_avg.mul_(beta1).add_(1.0 - beta1, grad)
+                exp_avg_sq.mul_(beta2).addcmul_(1.0 - beta2, grad, grad)
+                denom = exp_avg_sq.sqrt().add_(group["eps"])
+
+                step_size = group["lr"]
+                if group["correct_bias"]:  # No bias correction for Bert
+                    bias_correction1 = 1.0 - beta1 ** state["step"]
+                    bias_correction2 = 1.0 - beta2 ** state["step"]
+                    step_size = step_size * math.sqrt(bias_correction2) / bias_correction1
+
+                p.data.addcdiv_(-step_size, exp_avg, denom)
+
+                # Just adding the square of the weights to the loss function is *not*
+                # the correct way of using L2 regularization/weight decay with Adam,
+                # since that will interact with the m and v parameters in strange ways.
+                #
+                # Instead we want to decay the weights in a manner that doesn't interact
+                # with the m/v parameters. This is equivalent to adding the square
+                # of the weights to the loss with plain (non-momentum) SGD.
+                # Add weight decay at the end (fixed version)
+                if group["weight_decay"] > 0.0:
+                    p.data.add_(-group["lr"] * group["weight_decay"], p.data)
+
+        return loss
 
 
 class TokenEncoder:
@@ -267,8 +356,14 @@ class TransformerSequenceClassifier:
                  dataset: str,
                  batch_size_validation: int = None,
                  checkpoint: str = None,
+                 inference_mode: bool = False,
                  **kwargs):
-        LOGGER.info('*** initialize network ***')
+
+        self.inference_mode = inference_mode
+        if self.inference_mode:
+            LOGGER.info('*** initialize network (INFERENCE MODE) ***')
+        else:
+            LOGGER.info('*** initialize network ***')
 
         # checkpoint versioning
         self.param = ParameterManager(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
@@ -280,12 +375,21 @@ class TransformerSequenceClassifier:
         np.random.seed(self.param('random_seed'))
         torch.manual_seed(self.param('random_seed'))
 
-        # model setup
-        _, num_labels = get_dataset(self.param('dataset'))
-        model_seq_cls_class = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')]
+        # model/dataset setup
+        if self.inference_mode:
+            self.label_dict = json.load(open(os.path.join(CACHE_DIR, self.param('dataset'), 'label.json')))
+            self.dataset_split = None
+        else:
+            self.dataset_split, self.label_dict = get_dataset(self.param('dataset'))
+            with open(os.path.join(CACHE_DIR, self.param('dataset'), 'label.json'), 'w') as f:
+                json.dump(self.label_dict, f)
+
+        self.model_seq_cls = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')].from_pretrained(
+            self.param('transformer'),
+            cache_dir=CACHE_DIR,
+            num_labels=len(list(self.label_dict.keys()))
+        )
         self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
-        self.model_seq_cls = model_seq_cls_class.from_pretrained(
-            self.param('transformer'), cache_dir=CACHE_DIR, num_labels=num_labels)
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
@@ -295,50 +399,55 @@ class TransformerSequenceClassifier:
         elif self.n_gpu > 1:
             self.data_parallel = True
             self.model_seq_cls = torch.nn.DataParallel(self.model_seq_cls.cuda())
+            LOGGER.info('WARNING: torch.nn.DataParallel is not tested')
         else:
             self.n_gpu = 0
         LOGGER.info('running on %i GPUs' % self.n_gpu)
         self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
 
         # optimizer
-        if self.param("optimizer") == 'adamw':
-            self.optimizer = util_hf_optimizer.AdamW(
-                self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
-        elif self.param("optimizer") == 'adam':
-            self.optimizer = optim.Adam(
-                self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
-        elif self.param("optimizer") == 'sgd':
-            self.optimizer = optim.SGD(
-                self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+        if self.inference_mode:
+            self.optimizer = self.scheduler = None
         else:
-            raise ValueError('bad optimizer: %s' % self.param("optimizer"))
+            if self.param("optimizer") == 'adamw':
+                self.optimizer = AdamW(
+                    self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+            elif self.param("optimizer") == 'adam':
+                self.optimizer = optim.Adam(
+                    self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+            elif self.param("optimizer") == 'sgd':
+                self.optimizer = optim.SGD(
+                    self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+            else:
+                raise ValueError('bad optimizer: %s' % self.param("optimizer"))
 
-        # scheduler
-        if self.param('scheduler') == 'constant':
-            self.scheduler = util_hf_optimizer.get_constant_schedule(self.optimizer)
-        elif self.param('scheduler') == 'linear':
-            self.scheduler = util_hf_optimizer.get_linear_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps=self.param('warmup_step'),
-                num_training_steps=self.param('total_step'))
-        else:
-            raise ValueError('bad scheduler: %s' % self.param('scheduler'))
+            # scheduler
+            if self.param('scheduler') == 'constant':
+                self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lambda _: 1, last_epoch=-1)
+            elif self.param('scheduler') == 'linear':
+                self.scheduler = get_linear_schedule_with_warmup(
+                    self.optimizer,
+                    num_warmup_steps=self.param('warmup_step'),
+                    num_training_steps=self.param('total_step'))
+            else:
+                raise ValueError('bad scheduler: %s' % self.param('scheduler'))
 
         # load ckpt
         if os.path.exists(self.checkpoint_model):
-            ckpt = torch.load(self.checkpoint_model, map_location=self.device)
-            # if load_best_model:
-            #     self.model_seq_cls.load_state_dict(ckpt['best_model_state_dict'])
-            # else:
-            self.model_seq_cls.load_state_dict(ckpt['model_state_dict'])
-            self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            self.scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+            ckpt = torch.load(self.checkpoint_model, map_location='cpu')
             self.__step = ckpt['step']  # num of training step
             self.__epoch = ckpt['epoch']  # num of epoch
             self.__best_val_loss = ckpt['best_val_loss']
             self.__best_val_loss_step = ckpt['best_val_loss_step']
             self.__best_model_wts = ckpt['best_model_state_dict']
             LOGGER.info('load ckpt from %s' % self.checkpoint_model)
+            if self.inference_mode:
+                self.model_seq_cls.load_state_dict(ckpt['best_model_state_dict'])
+                LOGGER.info('load best ckpt from step %i / %i' % (self.__best_val_loss_step, self.__step))
+            else:
+                self.model_seq_cls.load_state_dict(ckpt['model_state_dict'])
+                self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+                self.scheduler.load_state_dict(ckpt['scheduler_state_dict'])
         else:
             self.__step = 0
             self.__epoch = 0
@@ -354,6 +463,7 @@ class TransformerSequenceClassifier:
             torch.cuda.empty_cache()
 
     def predict(self, x: list):
+        self.model_seq_cls.eval()
         data_loader = torch.utils.data.DataLoader(
             Dataset(x, token_encoder=self.token_encoder), batch_size=1)
         prediction = []
@@ -361,12 +471,15 @@ class TransformerSequenceClassifier:
             inputs = inputs.to(self.device)
             attn_mask = attn_mask.to(self.device)
             outputs = self.model_seq_cls(inputs, attention_mask=attn_mask)
-            loss, logit = outputs[0:2]
+            print(outputs)
+            logit = outputs[0]
             _, pred = torch.max(logit, 1)
             prediction.append(pred.cpu().item())
         return prediction
 
     def train(self):
+        if self.inference_mode:
+            raise ValueError('model is on an inference mode')
 
         # setup data loader
         LOGGER.info('setup dataset')
@@ -547,10 +660,13 @@ def get_options():
     parser.add_argument('--scheduler', help='scheduler', default='linear', type=str)
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
     parser.add_argument('--batch-size', help='batch size', default=16, type=int)
-    parser.add_argument('--batch-size-validation', help='batch size for validation', default=4, type=int)
-    parser.add_argument('--warmup-step', help='warmup step', default=700, type=int)  # 6% of total step recommended
+    parser.add_argument('--batch-size-validation',
+                        help='batch size for validation (smaller size to save memory)',
+                        default=4,
+                        type=int)
+    parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
-    parser.add_argument('--tolerance', help='tolerance for valid loss', default=None, type=float)
+    parser.add_argument('--tolerance', help='early stop tolerance in terms of valid loss', default=None, type=float)
     parser.add_argument('--checkpoint', help='checkpoint to load', default=None, type=str)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
     return parser.parse_args()
@@ -585,5 +701,6 @@ if __name__ == '__main__':
             elif _inp == '':
                 continue
             else:
-                print(classifier.predict([_inp]))
+                p = classifier.predict([_inp])
+                print(p)
 
