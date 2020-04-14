@@ -690,11 +690,10 @@ if __name__ == '__main__':
         tolerance=opt.tolerance,
         weight_decay=opt.weight_decay,
         batch_size=opt.batch_size,
-        max_seq_length=opt.max_seq_length
+        max_seq_length=opt.max_seq_length,
+        inference_mode=opt.inference_mode
     )
-    if not opt.inference_mode:
-        classifier.train()
-    else:
+    if classifier.inference_mode:
         while True:
             _inp = input('input sentence >>>')
             if _inp == 'q':
@@ -704,4 +703,7 @@ if __name__ == '__main__':
             else:
                 p = classifier.predict([_inp])
                 print(p)
+
+    else:
+        classifier.train()
 
