@@ -457,7 +457,10 @@ class TransformerSequenceClassifier:
             self.__best_model_wts = None
 
         # log
-        self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
+        if self.inference_mode:
+            self.writer = None
+        else:
+            self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
 
     def release_cache(self):
         if self.device == "cuda":
