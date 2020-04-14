@@ -378,17 +378,18 @@ class TransformerSequenceClassifier:
 
         # model/dataset setup
         if self.inference_mode:
-            self.label_dict = json.load(open(os.path.join(CACHE_DIR, self.param('dataset'), 'label.json')))
+            label_dict = json.load(open(os.path.join(CACHE_DIR, self.param('dataset'), 'label.json')))
             self.dataset_split = None
         else:
-            self.dataset_split, self.label_dict = get_dataset(self.param('dataset'))
+            self.dataset_split, label_dict = get_dataset(self.param('dataset'))
             with open(os.path.join(CACHE_DIR, self.param('dataset'), 'label.json'), 'w') as f:
-                json.dump(self.label_dict, f)
+                json.dump(label_dict, f)
+        self.id_to_label = dict([(str(v), str(k)) for k, v in label_dict.items()])
 
         self.model_seq_cls = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')].from_pretrained(
             self.param('transformer'),
             cache_dir=CACHE_DIR,
-            num_labels=len(list(self.label_dict.keys()))
+            num_labels=len(list(label_dict.keys()))
         )
         self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
 
@@ -466,20 +467,27 @@ class TransformerSequenceClassifier:
         if self.device == "cuda":
             torch.cuda.empty_cache()
 
-    def predict(self, x: list):
+    def predict(self,
+                x: list,
+                batch_size: int = 1):
         self.model_seq_cls.eval()
         data_loader = torch.utils.data.DataLoader(
-            Dataset(x, token_encoder=self.token_encoder), batch_size=1)
-        prediction = []
+            Dataset(x, token_encoder=self.token_encoder), batch_size=min(batch_size, len(x)))
+        prediction, prob = [], []
         for inputs, attn_mask in data_loader:
             inputs = inputs.to(self.device)
             attn_mask = attn_mask.to(self.device)
             outputs = self.model_seq_cls(inputs, attention_mask=attn_mask)
-            print(outputs)
             logit = outputs[0]
-            _, pred = torch.max(logit, 1)
-            prediction.append(pred.cpu().item())
-        return prediction
+            _, _pred = torch.max(logit, 1)
+            prediction.append(self.id_to_label[str(_pred.cpu().item())])
+            _prob = dict(
+                [(self.id_to_label[str(i)], float(pr))
+                 for i, pr in enumerate(torch.nn.functional.softmax(logit).cpu().tolist())]
+            )
+
+            prob.append(_prob)
+        return prediction, prob
 
     def train(self):
         if self.inference_mode:
@@ -704,8 +712,9 @@ if __name__ == '__main__':
             elif _inp == '':
                 continue
             else:
-                p = classifier.predict([_inp])
-                print(p)
+                predictions, probs = classifier.predict([_inp])
+                print(predictions[0])
+                print(probs[0])
 
     else:
         classifier.train()
