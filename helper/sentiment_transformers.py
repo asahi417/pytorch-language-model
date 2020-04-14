@@ -480,15 +480,15 @@ class TransformerSequenceClassifier:
             outputs = self.model_seq_cls(inputs, attention_mask=attn_mask)
             logit = outputs[0]
             _, _pred = torch.max(logit, 1)
-            prediction.append(self.id_to_label[str(_pred.cpu().item())])
-            _prob = torch.nn.functional.softmax(logit).cpu().tolist()
-            print(_prob)
-            _prob = dict(
+            _pred_list = _pred.cpu().tolist()
+            _prob_list = torch.nn.functional.softmax(logit).cpu().tolist()
+            print(_pred_list)
+            print(_prob_list)
+            prediction += [self.id_to_label[str(_p)] for _p in _pred_list]
+            prob += [dict(
                 [(self.id_to_label[str(i)], float(pr))
-                 for i, pr in enumerate(_prob)]
-            )
-
-            prob.append(_prob)
+                 for i, pr in enumerate(_p)]
+            ) for _p in _prob_list]
         return prediction, prob
 
     def train(self):
@@ -714,9 +714,9 @@ if __name__ == '__main__':
             elif _inp == '':
                 continue
             else:
-                predictions, probs = classifier.predict([_inp])
-                print(predictions[0])
-                print(probs[0])
+                predictions, probs = classifier.predict([_inp, _inp, _inp], batch_size=2)
+                print(predictions)
+                print(probs)
 
     else:
         classifier.train()
