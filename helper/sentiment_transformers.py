@@ -479,9 +479,9 @@ class TransformerSequenceClassifier:
             attn_mask = attn_mask.to(self.device)
             outputs = self.model_seq_cls(inputs, attention_mask=attn_mask)
             logit = outputs[0]
-            _, _pred = torch.max(logit, 1)
+            _, _pred = torch.max(logit, dim=1)
             _pred_list = _pred.cpu().tolist()
-            _prob_list = torch.nn.functional.softmax(logit).cpu().tolist()
+            _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
             print(_pred_list)
             print(_prob_list)
             prediction += [self.id_to_label[str(_p)] for _p in _pred_list]
