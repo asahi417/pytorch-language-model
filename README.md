@@ -1,5 +1,7 @@
-# Pytorch Language Modeling
-Pytorch language modeling.
+# Pytorch Language Model Experiments
+Some experimental stuffs related to language models:
+- Language model in pytorch and benchmarks (not just use pre-trained checkpoints, but implement and train from scratch over language modeling task).
+- Finetuning pre-trained language models over some downstream tasks
 
 ## Contents
 All the script work with python>=3.6. 
@@ -10,7 +12,7 @@ cd pytorch-tutorial
 pip install -r requirement.txt
 ```
 
-## Short result  
+## Language Modeling  
 
 - PennTreebank
 

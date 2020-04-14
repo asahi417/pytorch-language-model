@@ -481,9 +481,11 @@ class TransformerSequenceClassifier:
             logit = outputs[0]
             _, _pred = torch.max(logit, 1)
             prediction.append(self.id_to_label[str(_pred.cpu().item())])
+            _prob = torch.nn.functional.softmax(logit).cpu().tolist()
+            print(_prob)
             _prob = dict(
                 [(self.id_to_label[str(i)], float(pr))
-                 for i, pr in enumerate(torch.nn.functional.softmax(logit).cpu().tolist())]
+                 for i, pr in enumerate(_prob)]
             )
 
             prob.append(_prob)
