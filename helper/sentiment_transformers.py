@@ -470,6 +470,13 @@ class TransformerSequenceClassifier:
     def predict(self,
                 x: list,
                 batch_size: int = 1):
+        """ model inference
+
+        :param x: list of input
+        :param batch_size: batch size for inference
+        :return: (prediction, prob)
+            prediction is a list of predicted label, and prob is a list of dictionary with each probability
+        """
         self.model_seq_cls.eval()
         data_loader = torch.utils.data.DataLoader(
             Dataset(x, token_encoder=self.token_encoder), batch_size=min(batch_size, len(x)))
@@ -482,8 +489,6 @@ class TransformerSequenceClassifier:
             _, _pred = torch.max(logit, dim=1)
             _pred_list = _pred.cpu().tolist()
             _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
-            print(_pred_list)
-            print(_prob_list)
             prediction += [self.id_to_label[str(_p)] for _p in _pred_list]
             prob += [dict(
                 [(self.id_to_label[str(i)], float(pr))
@@ -714,7 +719,7 @@ if __name__ == '__main__':
             elif _inp == '':
                 continue
             else:
-                predictions, probs = classifier.predict([_inp, _inp, _inp], batch_size=2)
+                predictions, probs = classifier.predict([_inp])
                 print(predictions)
                 print(probs)
 
