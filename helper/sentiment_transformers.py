@@ -548,8 +548,8 @@ class TransformerSequenceClassifier:
                     if_early_stop = self.__epoch_valid(data_loader_valid, prefix='valid')
 
                     if if_training_finish or if_early_stop:
-                        # if data_loader_test:
-                        #     self.__epoch_valid(data_loader_valid, prefix='test')
+                        if data_loader_test:
+                            self.__epoch_valid(data_loader_test, prefix='test')
                         break
                     self.__epoch += 1
 
