@@ -234,10 +234,7 @@ class Dataset(torch.utils.data.Dataset):
                  token_encoder,
                  label: list=None):
         self.data = data
-        if label is None:
-            self.label = None
-        else:
-            self.label = [int(l) for l in label]
+        self.label = label
         self.token_encoder = token_encoder
 
     def __len__(self):
@@ -389,6 +386,7 @@ class TransformerSequenceClassifier:
             self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
 
         self.id_to_label = dict([(str(v), str(k)) for k, v in self.label_to_id.items()])
+        print(self.label_to_id)
         self.model_seq_cls = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')].from_pretrained(
             self.param('transformer'),
             cache_dir=CACHE_DIR,
