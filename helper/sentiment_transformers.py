@@ -57,30 +57,28 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
     """ download dataset file and return dictionary including training/validation split """
     label_to_id = dict() if label_to_id is None else label_to_id
 
-    def decode_data(iterator, file_prefix):
-        if os.path.exists(file_prefix + '.text') and os.path.exists(file_prefix + '.label'):
-            list_of_text = open(file_prefix + '.text', 'r').read().split('\n')
-            list_of_label = [int(l) for l in open(file_prefix + '.label', 'r').read().split('\n')]
-            assert len(list_of_label) == len(list_of_text)
-            return label_to_id, (list_of_text, list_of_label)
+    def decode_data(iterator, file_prefix, _label_to_id):
+        if not os.path.exists(file_prefix + '.text') or not os.path.exists(file_prefix + '.label'):
+            list_text = []
+            list_label = []
+            for i in iterator:
+                if data_name == 'sst' and i.label == 'neutral':
+                    continue
+                if i.label not in _label_to_id.keys():
+                    _label_to_id[i.label] = len(_label_to_id)
+                list_text.append(' '.join(i.text))
+                list_label.append(str(_label_to_id[i.label]))
 
-        list_text = []
-        list_label = []
-        for i in iterator:
-            if data_name == 'sst' and i.label == 'neutral':
-                continue
-            if i.label not in label_to_id.keys():
-                label_to_id[i.label] = len(label_to_id)
-            list_text.append(' '.join(i.text))
-            list_label.append(str(label_to_id[i.label]))
+            with open(file_prefix + '.text', 'w') as f_writer:
+                f_writer.write('\n'.join(list_text))
 
-        with open(file_prefix + '.text', 'w') as f_writer:
-            f_writer.write('\n'.join(list_text))
+            with open(file_prefix + '.label', 'w') as f_writer:
+                f_writer.write('\n'.join(list_label))
 
-        with open(file_prefix + '.label', 'w') as f_writer:
-            f_writer.write('\n'.join(list_label))
-
-        return label_to_id, None
+        list_of_text = open(file_prefix + '.text', 'r').read().split('\n')
+        list_of_label = [int(l) for l in open(file_prefix + '.label', 'r').read().split('\n')]
+        assert len(list_of_label) == len(list_of_text)
+        return _label_to_id, (list_of_text, list_of_label)
 
     data_field, label_field = torchtext.data.Field(sequential=True), torchtext.data.Field(sequential=False)
     if data_name == 'imdb':
@@ -91,19 +89,13 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
         raise ValueError('unknown dataset: %s' % data_name)
 
     data_split, data = list(), None
-    if os.path.exists(os.path.join(CACHE_DIR, data_name, 'label.json')):
-        label_dictionary = json.load(open(os.path.join(CACHE_DIR, data_name, 'label.json')))
-    else:
-        label_dictionary = dict()
 
     for name, it in zip(['train', 'valid', 'test'], iterator_split):
         _file_prefix = os.path.join(CACHE_DIR, data_name, name)
-        label_dictionary, data = decode_data(it, file_prefix=_file_prefix)
-        if data is None:
-            _, data = decode_data(it, file_prefix=_file_prefix)
+        label_to_id, data = decode_data(it, file_prefix=_file_prefix, _label_to_id=label_to_id)
         data_split.append(data)
         LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data[0])))
-    return data_split, label_dictionary
+    return data_split, label_to_id
 
 
 def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
@@ -382,11 +374,11 @@ class TransformerSequenceClassifier:
             self.writer = None
         else:
             self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
+            print(self.label_to_id)
             self.token_encoder = TokenEncoder(self.param('transformer'), max_seq_length=self.param('max_seq_length'))
             self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
 
         self.id_to_label = dict([(str(v), str(k)) for k, v in self.label_to_id.items()])
-        print(self.label_to_id)
         self.model_seq_cls = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')].from_pretrained(
             self.param('transformer'),
             cache_dir=CACHE_DIR,
