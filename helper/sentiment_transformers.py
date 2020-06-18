@@ -64,10 +64,10 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
             for i in iterator:
                 if data_name == 'sst' and i.label == 'neutral':
                     continue
-                if i.label not in _label_to_id.keys():
-                    _label_to_id[i.label] = len(_label_to_id)
+                # if i.label not in _label_to_id.keys():
+                #     _label_to_id[i.label] = len(_label_to_id)
                 list_text.append(' '.join(i.text))
-                list_label.append(str(_label_to_id[i.label]))
+                list_label.append(i.label)
 
             with open(file_prefix + '.text', 'w') as f_writer:
                 f_writer.write('\n'.join(list_text))
@@ -76,7 +76,11 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
                 f_writer.write('\n'.join(list_label))
 
         list_of_text = open(file_prefix + '.text', 'r').read().split('\n')
-        list_of_label = [int(l) for l in open(file_prefix + '.label', 'r').read().split('\n')]
+        list_of_label_raw = open(file_prefix + '.label', 'r').read().split('\n')
+        for unique_label in list(set(list_of_label_raw)):
+            if unique_label not in _label_to_id.keys():
+                _label_to_id[unique_label] = len(_label_to_id)
+        list_of_label = [int(_label_to_id[l]) for l in list_of_label_raw]
         assert len(list_of_label) == len(list_of_text)
         return _label_to_id, (list_of_text, list_of_label)
 
@@ -374,7 +378,6 @@ class TransformerSequenceClassifier:
             self.writer = None
         else:
             self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
-            print(self.label_to_id)
             self.token_encoder = TokenEncoder(self.param('transformer'), max_seq_length=self.param('max_seq_length'))
             self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
 
@@ -588,13 +591,10 @@ class TransformerSequenceClassifier:
             # zero the parameter gradients
             self.optimizer.zero_grad()
             # forward: output prediction and get loss
-            print(outputs)
             model_outputs = self.model_seq_cls(inputs, attention_mask=attn_mask, labels=outputs)
             loss, logit = model_outputs[0:2]
-
             if self.data_parallel:
                 loss = torch.mean(loss)
-
             _, pred = torch.max(logit, 1)
 
             # backward: calculate gradient
