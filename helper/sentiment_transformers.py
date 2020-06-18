@@ -598,6 +598,7 @@ class TransformerSequenceClassifier:
             # zero the parameter gradients
             self.optimizer.zero_grad()
             # forward: output prediction and get loss
+            print(outputs)
             model_outputs = self.model_seq_cls(inputs, attention_mask=attn_mask, labels=outputs)
             loss, logit = model_outputs[0:2]
 
