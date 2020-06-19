@@ -21,6 +21,7 @@ import transformers
 import torchtext
 import torch
 import numpy as np
+from time import time
 from torch import optim
 from torch import nn
 from torch.autograd import detect_anomaly
@@ -513,6 +514,7 @@ class TransformerSequenceClassifier:
             raise ValueError('model is on an inference mode')
 
         # setup data loader
+        start_time = time()
         LOGGER.info('setup dataset')
         data_loader_train = torch.utils.data.DataLoader(
             Dataset(self.dataset_split[0][0], label=self.dataset_split[0][1], token_encoder=self.token_encoder),
@@ -553,12 +555,14 @@ class TransformerSequenceClassifier:
         except KeyboardInterrupt:
             LOGGER.info('*** KeyboardInterrupt ***')
 
-        if self.__best_val_accuracy is None:
+        if self.__best_val_accuracy is None or self.__best_val_accuracy_step is None:
             self.param.remove_ckpt()
             exit('nothing to be saved')
 
-        LOGGER.info('[training completed] best model: valid loss %0.3f at step %i'
-                    % (self.__best_val_accuracy, self.__best_val_accuracy_step))
+        LOGGER.info('[training completed]')
+        LOGGER.info(' - best valid accuracy: %0.3f' % self.__best_val_accuracy)
+        LOGGER.info(' - best valid accuracy step: %i' % self.__best_val_accuracy_step)
+        LOGGER.info(' - full training time: %0.2f' % (time() - start_time))
         if self.data_parallel:
             model_wts = self.model_seq_cls.module.state_dict()
         else:
@@ -627,7 +631,7 @@ class TransformerSequenceClassifier:
 
         return False
 
-    def __epoch_valid(self, data_loader, prefix: str='valid'):
+    def __epoch_valid(self, data_loader, prefix: str='valid', is_valid: bool = True):
         """ validation/test """
         self.model_seq_cls.eval()
         list_accuracy, list_loss = [], []
@@ -649,7 +653,8 @@ class TransformerSequenceClassifier:
         self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
         self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
         LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
-
+        if not is_valid:
+            return False
         if self.__best_val_accuracy is None or accuracy > self.__best_val_accuracy:
             self.__best_val_accuracy = accuracy
             self.__best_val_accuracy_step = self.__step
