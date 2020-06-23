@@ -246,6 +246,16 @@ class TransformerTokenClassification:
 
         # model/dataset setup
         stats, label_to_id = self.load_ckpt()
+        if self.inference_mode:
+            if stats is None or label_to_id is None:
+                raise ValueError('As no checkpoints found, unable to perform inference.')
+            self.dataset_split, self.label_to_id = None, label_to_id
+            self.writer = None
+        else:
+            self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
+            self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
+        self.id_to_label = dict([(str(v), str(k)) for k, v in self.label_to_id.items()])
+
         self.config = transformers.AutoConfig.from_pretrained(
             self.param('transformer'),
             num_labels=len(self.id_to_label),
@@ -257,16 +267,6 @@ class TransformerTokenClassification:
             self.param('transformer'), config=self.config
         )
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
-
-        if self.inference_mode:
-            if stats is None or label_to_id is None:
-                raise ValueError('As no checkpoints found, unable to perform inference.')
-            self.dataset_split, self.label_to_id = None, label_to_id
-            self.writer = None
-        else:
-            self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
-            self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
-        self.id_to_label = dict([(str(v), str(k)) for k, v in self.label_to_id.items()])
 
         # load checkpoint
         self.__step = 0
