@@ -485,10 +485,19 @@ class TransformerTokenClassification:
             if self.data_parallel:
                 loss = torch.mean(loss)
             list_loss.append(loss.cpu().item())
-            _pred = torch.max(logit, 1)[1].cpu().int().tolist()
             _true = encode['labels'].cpu().int().tolist()
-            seq_pred.append([self.id_to_label[_p] for _p, _t in zip(_pred, _true) if _t != self.pad_token_label_id])
-            seq_true.append([self.id_to_label[_t] for _p, _t in zip(_pred, _true) if _t != self.pad_token_label_id])
+            _pred = torch.max(logit, 2)[1].cpu().int().tolist()
+            for b in range(len(_true)):
+                _pred_list, _true_list = [], []
+                for s in range(len(_true[b])):
+                    if _true[b][s] != self.pad_token_label_id:
+                        _true_list.append(self.id_to_label[_pred[b][s]])
+                        _pred_list.append(self.id_to_label[_true[b][s]])
+                assert len(_pred_list) == len(_true_list)
+                if len(_true_list) > 0:
+                    seq_true += _true_list
+                    seq_pred += _pred_list
+
         LOGGER.info('[epoch %i] (%s) \n %s' % (self.__epoch, prefix, classification_report(seq_true, seq_pred)))
         self.writer.add_scalar('%s/f1' % prefix, f1_score(seq_true, seq_pred), self.__epoch)
         self.writer.add_scalar('%s/recall' % prefix, recall_score(seq_true, seq_pred), self.__epoch)
