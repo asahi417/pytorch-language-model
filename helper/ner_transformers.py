@@ -109,20 +109,19 @@ class Dataset(torch.utils.data.Dataset):
         if max_seq_length and max_seq_length > self.tokenizer.max_len:
             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
-        LOGGER.info('max_sequence_length: %i, Tokenizer max_len: %i' % (self.max_seq_length, self.tokenizer.max_len))
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        encode = self.tokenizer.encode_plus(self.data[idx], max_length=self.max_seq_length, pad_to_max_length=True)
+        encode = self.tokenizer.encode_plus(' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=True)
         encode_tensor = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
         if self.label is not None:
-            assert len(self.label[idx]) == len(self.data[idx].split())
+            assert len(self.label[idx]) == len(self.data[idx])
             # Use the real label id for the first token of the word, and padding ids for the remaining tokens
             fixed_label = list(chain(*[
                 [label] + [self.pad_token_label_id] * (len(self.tokenizer.tokenize(word)) - 1)
-                for label, word in zip(self.label[idx], self.data[idx].split())]))
+                for label, word in zip(self.label[idx], self.data[idx])]))
             if encode['input_ids'][0] in self.tokenizer.all_special_ids:
                 fixed_label = [self.pad_token_label_id] + fixed_label
             fixed_label += [self.pad_token_label_id] * (len(encode['input_ids']) - len(fixed_label))
@@ -254,7 +253,7 @@ class TransformerTokenClassification:
         else:
             self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
             self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
-        self.id_to_label = dict([(str(v), str(k)) for k, v in self.label_to_id.items()])
+        self.id_to_label = dict([(v, str(k)) for k, v in self.label_to_id.items()])
 
         self.config = transformers.AutoConfig.from_pretrained(
             self.param('transformer'),
@@ -374,9 +373,9 @@ class TransformerTokenClassification:
         prediction, prob = [], []
         for encode in data_loader:
             logit = self.model_token_cls(**encode)[0]
-            _pred_list = torch.max(logit, dim=1)[1].cpu().tolist()
-            _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
-            prediction += [self.id_to_label[str(_p)] for _p in _pred_list]
+            pred = torch.max(logit, 2)[1].cpu().int().tolist()
+            prob = torch.nn.functional.softmax(logit, dim=2).cpu().tolist()
+            prediction += [[self.id_to_label[str(_p)]] for batch in pred]
             prob += [dict(
                 [(self.id_to_label[str(i)], float(pr))
                  for i, pr in enumerate(_p)]
@@ -519,7 +518,7 @@ def get_options():
     parser = argparse.ArgumentParser(
         description='finetune transformers to sentiment analysis',
         formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument('--data', help='data (imdb/sst)', default='sst', type=str)
+    parser.add_argument('--data', help='data conll_2003/wnut_17', default='wnut_17', type=str)
     parser.add_argument('--transformer', help='pretrained language model', default='xlm-roberta-base', type=str)
     parser.add_argument('--max-seq-length',
                         help='max sequence length (use same length as used in pre-training if not provided)',
