@@ -7,7 +7,6 @@
 - see https://huggingface.co/transformers/_modules/transformers/optimization.html#AdamW for AdamW and linear scheduler
 """
 
-import math
 import copy
 import traceback
 import argparse
@@ -356,38 +355,33 @@ class TransformerTokenClassification:
         else:
             return None, None
 
-    # def predict(self,
-    #             x: list,
-    #             batch_size: int = 1):
-    #     """ model inference
-    #
-    #     :param x: list of input
-    #     :param batch_size: batch size for inference
-    #     :return: (prediction, prob)
-    #         prediction is a list of predicted label, and prob is a list of dictionary with each probability
-    #     """
-    #     self.model_token_cls.eval()
-    #
-    #     data_loader = torch.utils.data.DataLoader(
-    #         Dataset(x, transformer_tokenizer=self.tokenizer, device=self.device), batch_size=min(batch_size, len(x)))
-    #
-    #     # data_loader = torch.utils.data.DataLoader(
-    #     #     Dataset(x, token_encoder=self.token_encoder), batch_size=min(batch_size, len(x)))
-    #     prediction, prob = [], []
-    #     for inputs, attn_mask in data_loader:
-    #         inputs = inputs.to(self.device)
-    #         attn_mask = attn_mask.to(self.device)
-    #         outputs = self.model_token_cls(inputs, attention_mask=attn_mask)
-    #         logit = outputs[0]
-    #         _, _pred = torch.max(logit, dim=1)
-    #         _pred_list = _pred.cpu().tolist()
-    #         _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
-    #         prediction += [self.id_to_label[str(_p)] for _p in _pred_list]
-    #         prob += [dict(
-    #             [(self.id_to_label[str(i)], float(pr))
-    #              for i, pr in enumerate(_p)]
-    #         ) for _p in _prob_list]
-    #     return prediction, prob
+    def predict(self,
+                x: list,
+                batch_size: int = 1):
+        """ model inference
+
+        :param x: list of input
+        :param batch_size: batch size for inference
+        :return: (prediction, prob)
+            prediction is a list of predicted label, and prob is a list of dictionary with each probability
+        """
+        self.model_token_cls.eval()
+        data_loader = torch.utils.data.DataLoader(
+            Dataset(
+                x, transformer_tokenizer=self.tokenizer, pad_token_label_id=self.pad_token_label_id, device=self.device),
+            batch_size=min(batch_size, len(x)))
+
+        prediction, prob = [], []
+        for encode in data_loader:
+            logit = self.model_token_cls(**encode)[0]
+            _pred_list = torch.max(logit, dim=1)[1].cpu().tolist()
+            _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
+            prediction += [self.id_to_label[str(_p)] for _p in _pred_list]
+            prob += [dict(
+                [(self.id_to_label[str(i)], float(pr))
+                 for i, pr in enumerate(_p)]
+            ) for _p in _prob_list]
+        return prediction, prob
 
     def train(self):
         if self.inference_mode:
@@ -517,10 +511,7 @@ def get_options():
         description='finetune transformers to sentiment analysis',
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('--data', help='data (imdb/sst)', default='sst', type=str)
-    parser.add_argument('--transformer',
-                        help='language model (%s)' % str(VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION.keys()),
-                        default='xlm-roberta-base',
-                        type=str)
+    parser.add_argument('--transformer', help='pretrained language model', default='xlm-roberta-base', type=str)
     parser.add_argument('--max-seq-length',
                         help='max sequence length (use same length as used in pre-training if not provided)',
                         default=128,
