@@ -418,6 +418,7 @@ class TransformerTokenClassification:
             exit('nothing to be saved')
 
         LOGGER.info('[training completed, %0.2f sec in total]' % (time() - start_time))
+        LOGGER.info(' - best val f1 score: %0.2f at step %i' % (self.__best_val_score, self.__best_val_score_step))
         if self.data_parallel:
             model_wts = self.model_token_cls.module.state_dict()
         else:
@@ -462,7 +463,7 @@ class TransformerTokenClassification:
             self.writer.add_scalar('train/loss', inst_loss, self.__step)
             self.writer.add_scalar('train/learning_rate', inst_lr, self.__step)
             if self.__step % PROGRESS_INTERVAL == 0:
-                LOGGER.info(' * (step %i) loss: %.3f, lr: %0.8f' % (self.__step, inst_loss, inst_lr))
+                LOGGER.info(' * (train step %i) loss: %.3f, lr: %0.8f' % (self.__step, inst_loss, inst_lr))
             self.__step += 1
             if self.__step >= self.param('total_step'):
                 LOGGER.info('reached maximum step')
@@ -531,7 +532,7 @@ def get_options():
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
     parser.add_argument('--batch-size-validation',
                         help='batch size for validation (smaller size to save memory)',
-                        default=4,
+                        default=1,
                         type=int)
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
