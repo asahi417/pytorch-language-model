@@ -446,10 +446,11 @@ class TransformerTokenClassification:
             self.optimizer.zero_grad()
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
-            print(logit)
+            print(logit.shape)
             print(loss)
             if self.data_parallel:
-                loss = torch.mean(loss)
+                loss = torch.sum(loss)
+                # loss.sum()
                 print(loss)
             loss.backward()
             if self.param('clip') is not None:
@@ -467,6 +468,7 @@ class TransformerTokenClassification:
             if self.__step % PROGRESS_INTERVAL == 0:
                 LOGGER.info(' * (training step %i) loss: %.3f, lr: %0.8f' % (self.__step, inst_loss, inst_lr))
             self.__step += 1
+            break
             if self.__step >= self.param('total_step'):
                 LOGGER.info('reached maximum step')
                 return True
@@ -481,8 +483,9 @@ class TransformerTokenClassification:
             encode = {k: v.to(self.device) for k, v in encode.items()}
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
+            print(logit.shape)
             if self.data_parallel:
-                loss = torch.mean(loss)
+                loss = torch.sum(loss)
             list_loss.append(loss.cpu().item())
             _true = encode['labels'].cpu().int().tolist()
             _pred = torch.max(logit, 2)[1].cpu().int().tolist()
