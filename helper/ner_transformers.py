@@ -89,7 +89,7 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None):
     for name, filepath in zip(['train', 'valid', 'test'], files):
         label_to_id, data_dict = decode_file(filepath, _label_to_id=label_to_id)
         data_split[name] = data_dict
-        LOGGER.info('dataset %s/%s: %i entries' % (data_name, filepath, len(data_dict['inputs'][0])))
+        LOGGER.info('dataset %s/%s: %i entries' % (data_name, filepath, len(data_dict['inputs'])))
     return data_split, label_to_id
 
 
@@ -110,8 +110,9 @@ class Dataset(torch.utils.data.Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        encode = self.tokenizer.encode_plus(' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=True)
-        # encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
+        encode = self.tokenizer.encode_plus(
+            ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=True)
+        encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
         if self.label is not None:
             assert len(self.label[idx]) == len(self.data[idx])
             # Use the real label id for the first token of the word, and padding ids for the remaining tokens
@@ -122,9 +123,8 @@ class Dataset(torch.utils.data.Dataset):
                 fixed_label = [self.pad_token_label_id] + fixed_label
             fixed_label += [self.pad_token_label_id] * (len(encode['input_ids']) - len(fixed_label))
             encode['labels'] = fixed_label
-        return encode
-        #     encode_tensor['labels'] = torch.tensor(fixed_label, dtype=torch.long)
-        # return encode_tensor
+            encode_tensor['labels'] = torch.tensor(fixed_label, dtype=torch.long)
+        return encode_tensor
 
 
 class ParameterManager:
@@ -441,9 +441,8 @@ class TransformerTokenClassification:
         """ train on single epoch return flag which is True if training has been completed """
         self.model_token_cls.train()
         for i, encode in enumerate(data_loader, 1):
-            # assign device
-            encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
             # update model
+            encode = {k: v.to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
@@ -476,7 +475,7 @@ class TransformerTokenClassification:
         self.model_token_cls.eval()
         list_loss, seq_pred, seq_true = [], [], []
         for encode in data_loader:
-            encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
+            encode = {k: v.to(self.device) for k, v in encode.items()}
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
             if self.data_parallel:
@@ -559,18 +558,18 @@ if __name__ == '__main__':
         max_seq_length=opt.max_seq_length,
         inference_mode=opt.inference_mode
     )
-    # if classifier.inference_mode:
-    #     while True:
-    #         _inp = input('input sentence >>>')
-    #         if _inp == 'q':
-    #             break
-    #         elif _inp == '':
-    #             continue
-    #         else:
-    #             predictions, probs = classifier.predict([_inp])
-    #             print(predictions)
-    #             print(probs)
-    #
-    # else:
-    classifier.train()
+    if classifier.inference_mode:
+        while True:
+            _inp = input('input sentence >>>')
+            if _inp == 'q':
+                break
+            elif _inp == '':
+                continue
+            else:
+                predictions, probs = classifier.predict([_inp])
+                print(predictions)
+                print(probs)
+
+    else:
+        classifier.train()
 
