@@ -384,7 +384,6 @@ class TransformerTokenClassification:
         if self.inference_mode:
             raise ValueError('model is on an inference mode')
         start_time = time()
-        LOGGER.info('setup dataset batch feeder')
         shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id}
         data_loader = {k: torch.utils.data.DataLoader(
             Dataset(v['inputs'], label=v['labels'], **shared),
@@ -394,7 +393,7 @@ class TransformerTokenClassification:
             drop_last=k == 'train')
             for k, v in self.dataset_split.items()}
 
-        LOGGER.info('start training from step %i (epoch: %i)' % (self.__step, self.__epoch))
+        LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
         try:
             with detect_anomaly():
                 while True:
@@ -447,8 +446,11 @@ class TransformerTokenClassification:
             self.optimizer.zero_grad()
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
+            print(logit)
+            print(loss)
             if self.data_parallel:
                 loss = torch.mean(loss)
+                print(loss)
             loss.backward()
             if self.param('clip') is not None:
                 nn.utils.clip_grad_norm_(self.model_token_cls.parameters(), self.param('clip'))
@@ -463,7 +465,7 @@ class TransformerTokenClassification:
             self.writer.add_scalar('train/loss', inst_loss, self.__step)
             self.writer.add_scalar('train/learning_rate', inst_lr, self.__step)
             if self.__step % PROGRESS_INTERVAL == 0:
-                LOGGER.info(' * (train step %i) loss: %.3f, lr: %0.8f' % (self.__step, inst_loss, inst_lr))
+                LOGGER.info(' * (training step %i) loss: %.3f, lr: %0.8f' % (self.__step, inst_loss, inst_lr))
             self.__step += 1
             if self.__step >= self.param('total_step'):
                 LOGGER.info('reached maximum step')
