@@ -320,10 +320,10 @@ class TransformerTokenClassification:
         self.data_parallel = False
         if self.n_gpu == 1:
             self.model_token_cls = self.model_token_cls.cuda()
-        elif self.n_gpu > 1:  # TODO: test multi-GPUs
+        elif self.n_gpu > 1:
             self.data_parallel = True
             self.model_token_cls = torch.nn.DataParallel(self.model_token_cls.cuda())
-            LOGGER.info('WARNING: torch.nn.DataParallel is not tested')
+            LOGGER.info('using `torch.nn.DataParallel`')
         else:
             self.n_gpu = 0
         LOGGER.info('running on %i GPUs' % self.n_gpu)
