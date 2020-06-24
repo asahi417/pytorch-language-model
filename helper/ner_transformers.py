@@ -89,7 +89,7 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None):
     for name, filepath in zip(['train', 'valid', 'test'], files):
         label_to_id, data_dict = decode_file(filepath, _label_to_id=label_to_id)
         data_split[name] = data_dict
-        LOGGER.info('dataset %s/%s: %i' % (data_name, filepath, len(data_dict['inputs'][0])))
+        LOGGER.info('dataset %s/%s: %i entries' % (data_name, filepath, len(data_dict['inputs'][0])))
     return data_split, label_to_id
 
 
@@ -111,7 +111,7 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         encode = self.tokenizer.encode_plus(' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=True)
-        encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
+        # encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
         if self.label is not None:
             assert len(self.label[idx]) == len(self.data[idx])
             # Use the real label id for the first token of the word, and padding ids for the remaining tokens
@@ -121,8 +121,10 @@ class Dataset(torch.utils.data.Dataset):
             if encode['input_ids'][0] in self.tokenizer.all_special_ids:
                 fixed_label = [self.pad_token_label_id] + fixed_label
             fixed_label += [self.pad_token_label_id] * (len(encode['input_ids']) - len(fixed_label))
-            encode_tensor['labels'] = torch.tensor(fixed_label, dtype=torch.long)
-        return encode_tensor
+            encode['labels'] = fixed_label
+        return encode
+        #     encode_tensor['labels'] = torch.tensor(fixed_label, dtype=torch.long)
+        # return encode_tensor
 
 
 class ParameterManager:
@@ -440,7 +442,7 @@ class TransformerTokenClassification:
         self.model_token_cls.train()
         for i, encode in enumerate(data_loader, 1):
             # assign device
-            encode = {k: v.to(self.device) for k, v in encode.items()}
+            encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
             # update model
             self.optimizer.zero_grad()
             model_outputs = self.model_token_cls(**encode)
@@ -474,6 +476,7 @@ class TransformerTokenClassification:
         self.model_token_cls.eval()
         list_loss, seq_pred, seq_true = [], [], []
         for encode in data_loader:
+            encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
             if self.data_parallel:
@@ -513,26 +516,26 @@ def get_options():
     parser = argparse.ArgumentParser(
         description='finetune transformers to sentiment analysis',
         formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument('--data', help='data conll_2003/wnut_17', default='wnut_17', type=str)
-    parser.add_argument('--transformer', help='pretrained language model', default='xlm-roberta-base', type=str)
-    parser.add_argument('--max-seq-length',
+    parser.add_argument('-c', '--checkpoint', help='checkpoint to load', default=None, type=str)
+    parser.add_argument('-d', '--data', help='data conll_2003/wnut_17', default='wnut_17', type=str)
+    parser.add_argument('-t', '--transformer', help='pretrained language model', default='xlm-roberta-base', type=str)
+    parser.add_argument('-m', '--max-seq-length',
                         help='max sequence length (use same length as used in pre-training if not provided)',
                         default=128,
                         type=int)
+    parser.add_argument('-b', '--batch-size', help='batch size', default=16, type=int)
     parser.add_argument('--random-seed', help='random seed', default=1234, type=int)
     parser.add_argument('--lr', help='learning rate', default=2e-5, type=float)
     parser.add_argument('--clip', help='gradient clip', default=None, type=float)
     parser.add_argument('--optimizer', help='optimizer', default='adam', type=str)
     parser.add_argument('--scheduler', help='scheduler', default='linear', type=str)
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
-    parser.add_argument('--batch-size', help='batch size', default=16, type=int)
     parser.add_argument('--batch-size-validation',
                         help='batch size for validation (smaller size to save memory)',
                         default=4,
                         type=int)
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
-    parser.add_argument('--checkpoint', help='checkpoint to load', default=None, type=str)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
     return parser.parse_args()
 
