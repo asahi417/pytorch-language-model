@@ -440,7 +440,7 @@ class TransformerTokenClassification:
         self.model_token_cls.train()
         for i, encode in enumerate(data_loader, 1):
             # assign device
-            encode = {k: v.to(self.device) for k, v in encode.items}
+            encode = {k: v.to(self.device) for k, v in encode.items()}
             # update model
             self.optimizer.zero_grad()
             model_outputs = self.model_token_cls(**encode)
