@@ -29,14 +29,11 @@ from itertools import chain
 from seqeval.metrics import f1_score, precision_score, recall_score, classification_report, accuracy_score
 
 
-dictConfig(
-    dict(
-        version=1,
-        formatters={'f': {'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'}},
-        handlers={'h': {'class': 'logging.StreamHandler', 'formatter': 'f', 'level': logging.DEBUG}},
-        root={'handlers': ['h'], 'level': logging.DEBUG}
-    )
-)
+dictConfig({
+    "version": 1,
+    "formatters": {'f': {'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'}},
+    "handlers": {'h': {'class': 'logging.StreamHandler', 'formatter': 'f', 'level': logging.DEBUG}},
+    "root": {'handlers': ['h'], 'level': logging.DEBUG}})
 LOGGER = logging.getLogger()
 NUM_WORKER = int(os.getenv("NUM_WORKER", '4'))
 PROGRESS_INTERVAL = int(os.getenv("PROGRESS_INTERVAL", '100'))
@@ -69,7 +66,7 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None):
                     if tag not in _label_to_id.keys():
                         _label_to_id[tag] = len(_label_to_id)
                     entity.append(_label_to_id[tag])
-        return _label_to_id, dict(inputs=inputs, labels=labels)
+        return _label_to_id, {"inputs": inputs, "labels": labels}
 
     if data_name == 'conll_2003':
         if not os.path.exists(data_path):
@@ -100,11 +97,10 @@ class Dataset(torch.utils.data.Dataset):
     """ torch.utils.data.Dataset with transformer tokenizer """
 
     def __init__(self, data: list, transformer_tokenizer, pad_token_label_id,
-                 max_seq_length: int = None, label: list = None, device: str='cpu'):
-        self.data = data
-        self.label = label
+                 max_seq_length: int = None, label: list = None):
+        self.data = data  # list of half-space split tokens
+        self.label = label  # list of label sequence
         self.tokenizer = transformer_tokenizer
-        self.device = device
         self.pad_token_label_id = pad_token_label_id
         if max_seq_length and max_seq_length > self.tokenizer.max_len:
             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
@@ -115,7 +111,7 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         encode = self.tokenizer.encode_plus(' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=True)
-        encode_tensor = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
+        encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
         if self.label is not None:
             assert len(self.label[idx]) == len(self.data[idx])
             # Use the real label id for the first token of the word, and padding ids for the remaining tokens
@@ -253,7 +249,7 @@ class TransformerTokenClassification:
         else:
             self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
             self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
-        self.id_to_label = dict([(v, str(k)) for k, v in self.label_to_id.items()])
+        self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
 
         self.config = transformers.AutoConfig.from_pretrained(
             self.param('transformer'),
@@ -338,65 +334,63 @@ class TransformerTokenClassification:
             assert os.path.exists(label_id_file)
             LOGGER.info('load ckpt from %s' % checkpoint_file)
             ckpt = torch.load(checkpoint_file, map_location='cpu')
-            ckpt_dict = dict(
-                step=ckpt['step'],
-                epoch=ckpt['epoch'],
-                model_state_dict=ckpt['model_state_dict'],
-                best_val_score=ckpt['best_val_f1_score'],
-                best_val_score_step=ckpt['best_val_f1_score_step'],
-                best_model_wts=ckpt['best_model_state_dict'],
-                best_model_state_dict=ckpt['best_model_state_dict'],
-                optimizer_state_dict=ckpt['optimizer_state_dict'],
-                scheduler_state_dict=ckpt['scheduler_state_dict'],
-            )
+            ckpt_dict = {
+                "step": ckpt['step'],
+                "epoch": ckpt['epoch'],
+                "model_state_dict": ckpt['model_state_dict'],
+                "best_val_score": ckpt['best_val_f1_score'],
+                "best_val_score_step": ckpt['best_val_f1_score_step'],
+                "best_model_wts": ckpt['best_model_state_dict'],
+                "best_model_state_dict": ckpt['best_model_state_dict'],
+                "optimizer_state_dict": ckpt['optimizer_state_dict'],
+                "scheduler_state_dict": ckpt['scheduler_state_dict']
+            }
             label_to_id = json.load(open(label_id_file, 'r'))
             return ckpt_dict, label_to_id
         else:
             return None, None
 
-    def predict(self,
-                x: list,
-                batch_size: int = 1):
-        """ model inference
-
-        :param x: list of input
-        :param batch_size: batch size for inference
-        :return: (prediction, prob)
-            prediction is a list of predicted label, and prob is a list of dictionary with each probability
-        """
-        self.model_token_cls.eval()
-        data_loader = torch.utils.data.DataLoader(
-            Dataset(
-                x, transformer_tokenizer=self.tokenizer, pad_token_label_id=self.pad_token_label_id, device=self.device),
-            batch_size=min(batch_size, len(x)))
-
-        prediction, prob = [], []
-        for encode in data_loader:
-            logit = self.model_token_cls(**encode)[0]
-            pred = torch.max(logit, 2)[1].cpu().int().tolist()
-            prob = torch.nn.functional.softmax(logit, dim=2).cpu().tolist()
-            prediction += [[self.id_to_label[str(_p)]] for batch in pred]
-            prob += [dict(
-                [(self.id_to_label[str(i)], float(pr))
-                 for i, pr in enumerate(_p)]
-            ) for _p in _prob_list]
-        return prediction, prob
+    # def predict(self,
+    #             x: list,
+    #             batch_size: int = 1):
+    #     """ model inference
+    #
+    #     :param x: list of input
+    #     :param batch_size: batch size for inference
+    #     :return: (prediction, prob)
+    #         prediction is a list of predicted label, and prob is a list of dictionary with each probability
+    #     """
+    #     self.model_token_cls.eval()
+    #     data_loader = torch.utils.data.DataLoader(
+    #         Dataset(
+    #             x, transformer_tokenizer=self.tokenizer, pad_token_label_id=self.pad_token_label_id, device=self.device),
+    #         batch_size=min(batch_size, len(x)))
+    #
+    #     prediction, prob = [], []
+    #     for encode in data_loader:
+    #         logit = self.model_token_cls(**encode)[0]
+    #         pred = torch.max(logit, 2)[1].cpu().int().tolist()
+    #         prob = torch.nn.functional.softmax(logit, dim=2).cpu().tolist()
+    #         prediction += [[self.id_to_label[str(_p)]] for batch in pred]
+    #         prob += [dict(
+    #             [(self.id_to_label[str(i)], float(pr))
+    #              for i, pr in enumerate(_p)]
+    #         ) for _p in _prob_list]
+    #     return prediction, prob
 
     def train(self):
         if self.inference_mode:
             raise ValueError('model is on an inference mode')
         start_time = time()
         LOGGER.info('setup dataset batch feeder')
-        shared = dict(
-            transformer_tokenizer=self.tokenizer, pad_token_label_id=self.pad_token_label_id, device=self.device)
-        data_loader = dict([
-            (k, torch.utils.data.DataLoader(
-              Dataset(v['inputs'], label=v['labels'], **shared),
-              num_workers=NUM_WORKER,
-              batch_size=self.param('batch_size') if k == 'train' else self.batch_size_validation,
-              shuffle=k == 'train',
-              drop_last=k == 'train'))
-            for k, v in self.dataset_split.items()])
+        shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id}
+        data_loader = {k: torch.utils.data.DataLoader(
+            Dataset(v['inputs'], label=v['labels'], **shared),
+            num_workers=NUM_WORKER,
+            batch_size=self.param('batch_size') if k == 'train' else self.batch_size_validation,
+            shuffle=k == 'train',
+            drop_last=k == 'train')
+            for k, v in self.dataset_split.items()}
 
         LOGGER.info('start training from step %i (epoch: %i)' % (self.__step, self.__epoch))
         try:
@@ -445,7 +439,8 @@ class TransformerTokenClassification:
         """ train on single epoch return flag which is True if training has been completed """
         self.model_token_cls.train()
         for i, encode in enumerate(data_loader, 1):
-
+            # assign device
+            encode = {k: v.to(self.device) for k, v in encode.items}
             # update model
             self.optimizer.zero_grad()
             model_outputs = self.model_token_cls(**encode)
