@@ -446,12 +446,8 @@ class TransformerTokenClassification:
             self.optimizer.zero_grad()
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
-            print(logit.shape)
-            print(loss)
             if self.data_parallel:
-                loss = torch.sum(loss)
-                # loss.sum()
-                print(loss)
+                loss = torch.mean(loss)
             loss.backward()
             if self.param('clip') is not None:
                 nn.utils.clip_grad_norm_(self.model_token_cls.parameters(), self.param('clip'))
@@ -483,7 +479,7 @@ class TransformerTokenClassification:
             encode = {k: v.to(self.device) for k, v in encode.items()}
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
-            print(logit.shape)
+            # print(logit.shape)
             if self.data_parallel:
                 loss = torch.sum(loss)
             list_loss.append(loss.cpu().item())
@@ -500,6 +496,8 @@ class TransformerTokenClassification:
                     seq_true += _true_list
                     seq_pred += _pred_list
 
+        print(seq_true)
+        print(seq_pred)
         LOGGER.info('[epoch %i] (%s) \n %s' % (self.__epoch, prefix, classification_report(seq_true, seq_pred)))
         self.writer.add_scalar('%s/f1' % prefix, f1_score(seq_true, seq_pred), self.__epoch)
         self.writer.add_scalar('%s/recall' % prefix, recall_score(seq_true, seq_pred), self.__epoch)
