@@ -464,7 +464,7 @@ class TransformerTokenClassification:
             if self.__step % PROGRESS_INTERVAL == 0:
                 LOGGER.info(' * (training step %i) loss: %.3f, lr: %0.8f' % (self.__step, inst_loss, inst_lr))
             self.__step += 1
-            break
+            # break
             if self.__step >= self.param('total_step'):
                 LOGGER.info('reached maximum step')
                 return True
@@ -493,11 +493,9 @@ class TransformerTokenClassification:
                         _pred_list.append(self.id_to_label[_true[b][s]])
                 assert len(_pred_list) == len(_true_list)
                 if len(_true_list) > 0:
-                    seq_true += _true_list
-                    seq_pred += _pred_list
+                    seq_true.append(_true_list)
+                    seq_pred.append(_pred_list)
 
-        print(seq_true)
-        print(seq_pred)
         LOGGER.info('[epoch %i] (%s) \n %s' % (self.__epoch, prefix, classification_report(seq_true, seq_pred)))
         self.writer.add_scalar('%s/f1' % prefix, f1_score(seq_true, seq_pred), self.__epoch)
         self.writer.add_scalar('%s/recall' % prefix, recall_score(seq_true, seq_pred), self.__epoch)
@@ -535,7 +533,7 @@ def get_options():
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
     parser.add_argument('--batch-size-validation',
                         help='batch size for validation (smaller size to save memory)',
-                        default=1,
+                        default=2,
                         type=int)
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
