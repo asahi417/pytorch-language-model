@@ -62,7 +62,7 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None):
                     ls = line.split()
                     sentence.append(ls[0])
                     # Examples could have no label for mode = "test"
-                    tag = 'O' if len(ls) < 2 else ls[1]
+                    tag = 'O' if len(ls) < 2 else ls[-1]
                     if tag not in _label_to_id.keys():
                         _label_to_id[tag] = len(_label_to_id)
                     entity.append(_label_to_id[tag])
@@ -252,7 +252,6 @@ class TransformerTokenClassification:
             self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
             self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
-
         self.config = transformers.AutoConfig.from_pretrained(
             self.param('transformer'),
             num_labels=len(self.id_to_label),
@@ -264,24 +263,6 @@ class TransformerTokenClassification:
             self.param('transformer'), config=self.config
         )
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
-
-        # load checkpoint
-        self.__step = 0
-        self.__epoch = 0
-        self.__best_val_score = None
-        self.__best_val_score_step = None
-        self.__best_model_wts = None
-        if stats is not None:
-            self.__step = stats['step']  # num of training step
-            self.__epoch = stats['epoch']  # num of epoch
-            self.__best_val_score = stats['best_val_f1_score']
-            self.__best_val_score_step = stats['best_val_f1_score_step']
-            if self.inference_mode:
-                self.model_token_cls.load_state_dict(stats['best_model_state_dict'])
-                LOGGER.info('use best ckpt from step %i / %i' % (self.__best_val_score_step, self.__step))
-            else:
-                self.__best_model_wts = stats['best_model_state_dict']
-                self.model_token_cls.load_state_dict(stats['model_state_dict'])
 
         # optimizer
         if self.inference_mode:
@@ -310,10 +291,36 @@ class TransformerTokenClassification:
             else:
                 raise ValueError('unknown scheduler: %s' % self.param('scheduler'))
 
-            # apply checkpoint statistics to optimizer/scheduler
-            if stats is not None:
-                self.optimizer.load_state_dict(stats['optimizer_state_dict'])
-                self.scheduler.load_state_dict(stats['scheduler_state_dict'])
+            # mixture precision
+            if self.param('fp16'):
+                try:
+                    from apex import amp  # noqa: F401
+                    self.model_token_cls, self.optimizer = amp.initialize(
+                        self.model_token_cls, self.optimizer, opt_level='O1')
+                except ImportError:
+                    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
+
+        # load checkpoint
+        self.__step = 0
+        self.__epoch = 0
+        self.__best_val_score = None
+        self.__best_val_score_step = None
+        self.__best_model_wts = None
+        if stats is not None:
+            self.__step = stats['step']  # num of training step
+            self.__epoch = stats['epoch']  # num of epoch
+            self.__best_val_score = stats['best_val_f1_score']
+            self.__best_val_score_step = stats['best_val_f1_score_step']
+            if self.inference_mode:
+                self.model_token_cls.load_state_dict(stats['best_model_state_dict'])
+                LOGGER.info('use best ckpt from step %i / %i' % (self.__best_val_score_step, self.__step))
+            else:
+                self.__best_model_wts = stats['best_model_state_dict']
+                self.model_token_cls.load_state_dict(stats['model_state_dict'])
+        # apply checkpoint statistics to optimizer/scheduler
+        if stats is not None and self.optimizer is not None and self.scheduler is not None:
+            self.optimizer.load_state_dict(stats['optimizer_state_dict'])
+            self.scheduler.load_state_dict(stats['scheduler_state_dict'])
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
@@ -457,7 +464,7 @@ class TransformerTokenClassification:
             self.scheduler.step()
 
             # log instantaneous accuracy, loss, and learning rate
-            inst_loss = loss.cpu().item()
+            inst_loss = loss.cpu().detach().item()
             inst_lr = self.optimizer.param_groups[0]['lr']
             self.writer.add_scalar('train/loss', inst_loss, self.__step)
             self.writer.add_scalar('train/learning_rate', inst_lr, self.__step)
@@ -479,12 +486,11 @@ class TransformerTokenClassification:
             encode = {k: v.to(self.device) for k, v in encode.items()}
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
-            # print(logit.shape)
             if self.data_parallel:
                 loss = torch.sum(loss)
-            list_loss.append(loss.cpu().item())
-            _true = encode['labels'].cpu().int().tolist()
-            _pred = torch.max(logit, 2)[1].cpu().int().tolist()
+            list_loss.append(loss.cpu().detach().item())
+            _true = encode['labels'].cpu().detach().int().tolist()
+            _pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
             for b in range(len(_true)):
                 _pred_list, _true_list = [], []
                 for s in range(len(_true[b])):
@@ -538,6 +544,7 @@ def get_options():
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
+    parser.add_argument('--fp16', help='fp16', action='store_true')
     return parser.parse_args()
 
 
@@ -558,7 +565,8 @@ if __name__ == '__main__':
         weight_decay=opt.weight_decay,
         batch_size=opt.batch_size,
         max_seq_length=opt.max_seq_length,
-        inference_mode=opt.inference_mode
+        inference_mode=opt.inference_mode,
+        fp16=opt.fp16
     )
     if classifier.inference_mode:
         while True:
