@@ -375,7 +375,7 @@ class TransformerTokenClassification:
         prediction = []
         for encode in data_loader:
             encode = {k: v.to(self.device) for k, v in encode.items()}
-            print(encode['inputs'])
+            print(encode)
             logit = self.model_token_cls(**encode)[0]
             print(logit)
             print(logit.shpe)
