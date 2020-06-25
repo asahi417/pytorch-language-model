@@ -375,12 +375,18 @@ class TransformerTokenClassification:
         prediction = []
         for encode in data_loader:
             encode = {k: v.to(self.device) for k, v in encode.items()}
+            print(encode['inputs'])
             logit = self.model_token_cls(**encode)[0]
+            print(logit)
+            print(logit.shpe)
             pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
+            print(pred)
+            print(pred.shpe)
             prediction += [[self.id_to_label[_p] for _p in batch] for batch in pred]
         return prediction
 
     def train(self):
+        LOGGER.addHandler(logging.FileHandler(os.path.join(self.param.checkpoint_dir, 'logger.log')))
         if self.inference_mode:
             raise ValueError('model is on an inference mode')
         start_time = time()
