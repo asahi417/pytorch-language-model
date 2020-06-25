@@ -359,33 +359,26 @@ class TransformerTokenClassification:
         else:
             return None, None
 
-    # def predict(self,
-    #             x: list,
-    #             batch_size: int = 1):
-    #     """ model inference
-    #
-    #     :param x: list of input
-    #     :param batch_size: batch size for inference
-    #     :return: (prediction, prob)
-    #         prediction is a list of predicted label, and prob is a list of dictionary with each probability
-    #     """
-    #     self.model_token_cls.eval()
-    #     data_loader = torch.utils.data.DataLoader(
-    #         Dataset(
-    #             x, transformer_tokenizer=self.tokenizer, pad_token_label_id=self.pad_token_label_id, device=self.device),
-    #         batch_size=min(batch_size, len(x)))
-    #
-    #     prediction, prob = [], []
-    #     for encode in data_loader:
-    #         logit = self.model_token_cls(**encode)[0]
-    #         pred = torch.max(logit, 2)[1].cpu().int().tolist()
-    #         prob = torch.nn.functional.softmax(logit, dim=2).cpu().tolist()
-    #         prediction += [[self.id_to_label[str(_p)]] for batch in pred]
-    #         prob += [dict(
-    #             [(self.id_to_label[str(i)], float(pr))
-    #              for i, pr in enumerate(_p)]
-    #         ) for _p in _prob_list]
-    #     return prediction, prob
+    def predict(self,
+                x: list,
+                batch_size: int = 1):
+        """ model inference
+
+        :param x: list of input
+        :param batch_size: batch size for inference
+        :return: (prediction, prob)
+            prediction is a list of predicted label, and prob is a list of dictionary with each probability
+        """
+        shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id}
+        self.model_token_cls.eval()
+        data_loader = torch.utils.data.DataLoader(Dataset(x, **shared), batch_size=min(batch_size, len(x)))
+        prediction = []
+        for encode in data_loader:
+            encode = {k: v.to(self.device) for k, v in encode.items()}
+            logit = self.model_token_cls(**encode)[0]
+            pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
+            prediction += [[self.id_to_label[_p] for _p in batch] for batch in pred]
+        return prediction
 
     def train(self):
         if self.inference_mode:
@@ -452,7 +445,7 @@ class TransformerTokenClassification:
             encode = {k: v.to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
             model_outputs = self.model_token_cls(**encode)
-            loss, logit = model_outputs[0:2]
+            loss, _ = model_outputs[0:2]
             if self.data_parallel:
                 loss = torch.mean(loss)
             loss.backward()
@@ -576,9 +569,8 @@ if __name__ == '__main__':
             elif _inp == '':
                 continue
             else:
-                predictions, probs = classifier.predict([_inp])
+                predictions = classifier.predict([_inp])
                 print(predictions)
-                print(probs)
 
     else:
         classifier.train()
