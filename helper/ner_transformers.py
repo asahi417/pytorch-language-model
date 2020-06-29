@@ -373,22 +373,9 @@ class TransformerTokenClassification:
         encode = self.tokenizer.batch_encode_plus(x)
         print(encode)
         encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
-        logit = self.model_token_cls(**encode)
+        logit = self.model_token_cls(**encode)[1]
         pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
         prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
-        # shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id,
-        #           "pad_to_max_length": False}
-        # self.model_token_cls.eval()
-        # data_loader = torch.utils.data.DataLoader(Dataset(x, **shared), batch_size=min(batch_size, len(x)))
-        # prediction = []
-        # for encode in data_loader:
-        #     encode = {k: v.to(self.device) for k, v in encode.items()}
-        #     print(encode)
-        #     logit = self.model_token_cls(**encode)[0]
-        #     print(logit)
-        #     # print(logit)
-        #     pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
-        #     prediction += [[self.id_to_label[_p] for _p in batch] for batch in pred]
         return prediction
 
     def train(self):
