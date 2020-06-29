@@ -38,6 +38,7 @@ pip install -r requirement.txt
 - [x] Regard `<eos>` as a special token in SentencePiece tokenizer
 - [x] Train from other checkpoint
 - [x] Avoid explosion by clamp exp 
+- [ ] Test DataParallel
 - [ ] mixture precision (fp16 training) 
 - [ ] [Adaptive Attention Span](https://arxiv.org/pdf/1905.07799.pdf) as it efficiently runs on single GPU.
 - [ ] Async data batcher (well, the RAM is always full so it might not be useful anymore...)

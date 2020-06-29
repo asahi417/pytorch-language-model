@@ -1,4 +1,4 @@
-""" self-contained sentiment analysis model finetuning on hugginface.transformers
+""" self-contained sentiment analysis model finetuning on hugginface.transformers (imdb/sst)
 
 - checkpoint managers: different ckpt id will be given to different configuration
 - dataset: sst/imdb dataset will be automatically fetched from source and compile as DataLoader
@@ -58,32 +58,21 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
     """ download dataset file and return dictionary including training/validation split """
     label_to_id = dict() if label_to_id is None else label_to_id
 
-    def decode_data(iterator, file_prefix, _label_to_id):
-        if not os.path.exists(file_prefix + '.text') or not os.path.exists(file_prefix + '.label'):
-            list_text = []
-            list_label = []
-            for i in iterator:
-                if data_name == 'sst' and i.label == 'neutral':
-                    continue
-                # if i.label not in _label_to_id.keys():
-                #     _label_to_id[i.label] = len(_label_to_id)
-                list_text.append(' '.join(i.text))
-                list_label.append(i.label)
+    def decode_data(iterator, _label_to_id: dict):
+        list_text = []
+        list_label = []
+        for i in iterator:
+            if data_name == 'sst' and i.label == 'neutral':
+                continue
+            list_text.append(' '.join(i.text))
+            list_label.append(i.label)
 
-            with open(file_prefix + '.text', 'w') as f_writer:
-                f_writer.write('\n'.join(list_text))
-
-            with open(file_prefix + '.label', 'w') as f_writer:
-                f_writer.write('\n'.join(list_label))
-
-        list_of_text = open(file_prefix + '.text', 'r').read().split('\n')
-        list_of_label_raw = open(file_prefix + '.label', 'r').read().split('\n')
-        for unique_label in list(set(list_of_label_raw)):
+        for unique_label in list(set(list_label)):
             if unique_label not in _label_to_id.keys():
                 _label_to_id[unique_label] = len(_label_to_id)
-        list_of_label = [int(_label_to_id[l]) for l in list_of_label_raw]
-        assert len(list_of_label) == len(list_of_text)
-        return _label_to_id, (list_of_text, list_of_label)
+        list_label = [int(_label_to_id[l]) for l in list_label]
+        assert len(list_label) == len(list_text)
+        return _label_to_id, (list_text, list_label)
 
     data_field, label_field = torchtext.data.Field(sequential=True), torchtext.data.Field(sequential=False)
     if data_name == 'imdb':
@@ -96,8 +85,7 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
     data_split, data = list(), None
 
     for name, it in zip(['train', 'valid', 'test'], iterator_split):
-        _file_prefix = os.path.join(CACHE_DIR, data_name, name)
-        label_to_id, data = decode_data(it, file_prefix=_file_prefix, _label_to_id=label_to_id)
+        label_to_id, data = decode_data(it, _label_to_id=label_to_id)
         data_split.append(data)
         LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data[0])))
     return data_split, label_to_id
@@ -344,7 +332,7 @@ class ParameterManager:
                 return target_checkpoints_path, parameter
 
 
-class TransformerSequenceClassifier:
+class TransformerSequenceClassification:
     """ finetune transformers on text classification """
 
     def __init__(self,
@@ -544,7 +532,7 @@ class TransformerSequenceClassifier:
 
                     if if_training_finish or if_early_stop:
                         if data_loader_test:
-                            self.__epoch_valid(data_loader_test, prefix='test')
+                            self.__epoch_valid(data_loader_test, prefix='test', is_valid=False)
                         break
                     self.__epoch += 1
 
@@ -704,7 +692,7 @@ def get_options():
 
 if __name__ == '__main__':
     opt = get_options()
-    classifier = TransformerSequenceClassifier(
+    classifier = TransformerSequenceClassification(
         batch_size_validation=opt.batch_size_validation,
         checkpoint=opt.checkpoint,
         dataset=opt.data,

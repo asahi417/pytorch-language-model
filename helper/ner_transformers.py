@@ -378,10 +378,8 @@ class TransformerTokenClassification:
             print(encode)
             logit = self.model_token_cls(**encode)[0]
             print(logit)
-            print(logit.shpe)
+            # print(logit)
             pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
-            print(pred)
-            print(pred.shpe)
             prediction += [[self.id_to_label[_p] for _p in batch] for batch in pred]
         return prediction
 
