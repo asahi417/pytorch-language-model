@@ -97,9 +97,10 @@ class Dataset(torch.utils.data.Dataset):
     """ torch.utils.data.Dataset with transformer tokenizer """
 
     def __init__(self, data: list, transformer_tokenizer, pad_token_label_id,
-                 max_seq_length: int = None, label: list = None):
+                 max_seq_length: int = None, label: list = None, pad_to_max_length: bool = True):
         self.data = data  # list of half-space split tokens
         self.label = label  # list of label sequence
+        self.pad_to_max_length = pad_to_max_length
         self.tokenizer = transformer_tokenizer
         self.pad_token_label_id = pad_token_label_id
         if max_seq_length and max_seq_length > self.tokenizer.max_len:
@@ -111,7 +112,7 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         encode = self.tokenizer.encode_plus(
-            ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=True)
+            ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
         encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
         if self.label is not None:
             assert len(self.label[idx]) == len(self.data[idx])
@@ -369,7 +370,8 @@ class TransformerTokenClassification:
         :return: (prediction, prob)
             prediction is a list of predicted label, and prob is a list of dictionary with each probability
         """
-        shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id}
+        shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id,
+                  "self.pad_to_max_length": False}
         self.model_token_cls.eval()
         data_loader = torch.utils.data.DataLoader(Dataset(x, **shared), batch_size=min(batch_size, len(x)))
         prediction = []
