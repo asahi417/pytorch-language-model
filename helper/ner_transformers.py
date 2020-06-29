@@ -370,19 +370,25 @@ class TransformerTokenClassification:
         :return: (prediction, prob)
             prediction is a list of predicted label, and prob is a list of dictionary with each probability
         """
-        shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id,
-                  "pad_to_max_length": False}
-        self.model_token_cls.eval()
-        data_loader = torch.utils.data.DataLoader(Dataset(x, **shared), batch_size=min(batch_size, len(x)))
-        prediction = []
-        for encode in data_loader:
-            encode = {k: v.to(self.device) for k, v in encode.items()}
-            print(encode)
-            logit = self.model_token_cls(**encode)[0]
-            print(logit)
-            # print(logit)
-            pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
-            prediction += [[self.id_to_label[_p] for _p in batch] for batch in pred]
+        print(x)
+        print(self.tokenizer.tokenize(x))
+        encode = self.tokenizer.batch_encode_plus(x)
+        logit = self.model_token_cls(**encode)
+        pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
+        prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
+        # shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id,
+        #           "pad_to_max_length": False}
+        # self.model_token_cls.eval()
+        # data_loader = torch.utils.data.DataLoader(Dataset(x, **shared), batch_size=min(batch_size, len(x)))
+        # prediction = []
+        # for encode in data_loader:
+        #     encode = {k: v.to(self.device) for k, v in encode.items()}
+        #     print(encode)
+        #     logit = self.model_token_cls(**encode)[0]
+        #     print(logit)
+        #     # print(logit)
+        #     pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
+        #     prediction += [[self.id_to_label[_p] for _p in batch] for batch in pred]
         return prediction
 
     def train(self):
