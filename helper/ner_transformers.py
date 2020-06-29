@@ -361,19 +361,13 @@ class TransformerTokenClassification:
             return None, None
 
     def predict(self, x: list):
-        """ model inference
-
-        :param x: list of input
-        :param batch_size: batch size for inference
-        :return: (prediction, prob)
-            prediction is a list of predicted label, and prob is a list of dictionary with each probability
-        """
+        """ model inference """
         print(x)
         print(self.tokenizer.tokenize(x[0]))
         encode = self.tokenizer.batch_encode_plus(x)
         print(encode)
         encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
-        logit = self.model_token_cls(**encode)[1]
+        logit = self.model_token_cls(**encode)[0]
         pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
         prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
         return prediction
