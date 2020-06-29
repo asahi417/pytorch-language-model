@@ -371,7 +371,7 @@ class TransformerTokenClassification:
             prediction is a list of predicted label, and prob is a list of dictionary with each probability
         """
         shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id,
-                  "self.pad_to_max_length": False}
+                  "pad_to_max_length": False}
         self.model_token_cls.eval()
         data_loader = torch.utils.data.DataLoader(Dataset(x, **shared), batch_size=min(batch_size, len(x)))
         prediction = []
