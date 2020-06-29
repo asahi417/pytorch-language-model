@@ -360,9 +360,7 @@ class TransformerTokenClassification:
         else:
             return None, None
 
-    def predict(self,
-                x: list,
-                batch_size: int = 1):
+    def predict(self, x: list):
         """ model inference
 
         :param x: list of input
@@ -371,8 +369,9 @@ class TransformerTokenClassification:
             prediction is a list of predicted label, and prob is a list of dictionary with each probability
         """
         print(x)
-        print(self.tokenizer.tokenize(x))
+        print(self.tokenizer.tokenize(x[0]))
         encode = self.tokenizer.batch_encode_plus(x)
+        print(encode)
         logit = self.model_token_cls(**encode)
         pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
         prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
