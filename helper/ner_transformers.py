@@ -372,6 +372,7 @@ class TransformerTokenClassification:
         print(self.tokenizer.tokenize(x[0]))
         encode = self.tokenizer.batch_encode_plus(x)
         print(encode)
+        encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
         logit = self.model_token_cls(**encode)
         pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
         prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
