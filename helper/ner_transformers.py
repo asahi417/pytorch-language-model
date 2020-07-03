@@ -66,7 +66,7 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None):
                     if tag not in _label_to_id.keys():
                         _label_to_id[tag] = len(_label_to_id)
                     entity.append(_label_to_id[tag])
-        return _label_to_id, {"inputs": inputs, "labels": labels}
+        return _label_to_id, {"data": inputs, "labels": labels}
 
     if data_name == 'conll_2003':
         if not os.path.exists(data_path):
@@ -89,7 +89,7 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None):
     for name, filepath in zip(['train', 'valid', 'test'], files):
         label_to_id, data_dict = decode_file(filepath, _label_to_id=label_to_id)
         data_split[name] = data_dict
-        LOGGER.info('dataset %s/%s: %i entries' % (data_name, filepath, len(data_dict['inputs'])))
+        LOGGER.info('dataset %s/%s: %i entries' % (data_name, filepath, len(data_dict['data'])))
     return data_split, label_to_id
 
 
@@ -305,19 +305,12 @@ class TransformerTokenClassification:
         self.__step = 0
         self.__epoch = 0
         self.__best_val_score = None
-        self.__best_val_score_step = None
-        self.__best_model_wts = None
         if stats is not None:
             self.__step = stats['step']  # num of training step
             self.__epoch = stats['epoch']  # num of epoch
-            self.__best_val_score = stats['best_val_f1_score']
-            self.__best_val_score_step = stats['best_val_f1_score_step']
-            if self.inference_mode:
-                self.model_token_cls.load_state_dict(stats['best_model_state_dict'])
-                LOGGER.info('use best ckpt from step %i / %i' % (self.__best_val_score_step, self.__step))
-            else:
-                self.__best_model_wts = stats['best_model_state_dict']
-                self.model_token_cls.load_state_dict(stats['model_state_dict'])
+            self.__best_val_score = stats['best_val_score']
+            self.model_token_cls.load_state_dict(stats['model_state_dict'])
+
         # apply checkpoint statistics to optimizer/scheduler
         if stats is not None and self.optimizer is not None and self.scheduler is not None:
             self.optimizer.load_state_dict(stats['optimizer_state_dict'])
@@ -325,17 +318,14 @@ class TransformerTokenClassification:
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
+        self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
+        self.model_token_cls.to(self.device)
         self.data_parallel = False
-        if self.n_gpu == 1:
-            self.model_token_cls = self.model_token_cls.cuda()
-        elif self.n_gpu > 1:
+        if self.n_gpu > 1:
             self.data_parallel = True
             self.model_token_cls = torch.nn.DataParallel(self.model_token_cls.cuda())
             LOGGER.info('using `torch.nn.DataParallel`')
-        else:
-            self.n_gpu = 0
         LOGGER.info('running on %i GPUs' % self.n_gpu)
-        self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
 
     def load_ckpt(self):
         checkpoint_file = os.path.join(self.param.checkpoint_dir, 'model.pt')
@@ -343,15 +333,12 @@ class TransformerTokenClassification:
         if os.path.exists(checkpoint_file):
             assert os.path.exists(label_id_file)
             LOGGER.info('load ckpt from %s' % checkpoint_file)
-            ckpt = torch.load(checkpoint_file, map_location='cpu')
+            ckpt = torch.load(checkpoint_file, map_location='cpu')  # allocate stats on cpu
             ckpt_dict = {
                 "step": ckpt['step'],
                 "epoch": ckpt['epoch'],
                 "model_state_dict": ckpt['model_state_dict'],
-                "best_val_f1_score": ckpt['best_val_f1_score'],
-                "best_val_f1_score_step": ckpt['best_val_f1_score_step'],
-                "best_model_wts": ckpt['best_model_state_dict'],
-                "best_model_state_dict": ckpt['best_model_state_dict'],
+                "best_val_score": ckpt['best_val_score'],
                 "optimizer_state_dict": ckpt['optimizer_state_dict'],
                 "scheduler_state_dict": ckpt['scheduler_state_dict']
             }
@@ -362,42 +349,48 @@ class TransformerTokenClassification:
 
     def predict(self, x: list):
         """ model inference """
-        print(self.tokenizer.tokenize(x[0]))
-        # encode = self.tokenizer.batch_encode_plus(x)
-        # print(encode)
-        print([self.tokenizer.decode(i) for i in encode['input_ids']])
-
+        encode = self.tokenizer.batch_encode_plus(x)
         encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
         logit = self.model_token_cls(**encode)[0]
         pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
         prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
+        # print([self.tokenizer.decode(i) for i in encode['input_ids']])
+        # print(prediction)
         return prediction
 
     def train(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.param.checkpoint_dir, 'logger.log')))
         if self.inference_mode:
             raise ValueError('model is on an inference mode')
+
+        LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
         start_time = time()
         shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id}
         data_loader = {k: torch.utils.data.DataLoader(
-            Dataset(v['inputs'], label=v['labels'], **shared),
+            Dataset(**self.dataset_split.pop(k).update(shared)),
             num_workers=NUM_WORKER,
             batch_size=self.param('batch_size') if k == 'train' else self.batch_size_validation,
             shuffle=k == 'train',
             drop_last=k == 'train')
-            for k, v in self.dataset_split.items()}
-
-        LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
+            for k in ['train', 'valid']}
+        data_loader_test = {k: torch.utils.data.DataLoader(
+            Dataset(**self.dataset_split.pop(k).update(shared)),
+            num_workers=NUM_WORKER,
+            batch_size=self.batch_size_validation)
+            for k in self.dataset_split.keys()}
+        print(str(list(self.dataset_split.keys())))
+        LOGGER.info('data_loader     : %s' % str(list(data_loader.keys())))
+        LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
         try:
             with detect_anomaly():
                 while True:
                     if_training_finish = self.__epoch_train(data_loader['train'])
-                    self.__epoch_valid(data_loader['valid'], prefix='valid')
-                    if if_training_finish:
-                        if 'test' in data_loader.keys():
-                            self.__epoch_valid(data_loader['test'], prefix='test')
+                    if_early_stop = self.__epoch_valid(data_loader['valid'], prefix='valid')
+                    if if_training_finish or if_early_stop:
                         break
                     self.__epoch += 1
+                for k, v in data_loader.items():
+                    self.__epoch_valid(v, prefix=k)
 
         except RuntimeError:
             LOGGER.info(traceback.format_exc())
@@ -406,25 +399,22 @@ class TransformerTokenClassification:
         except KeyboardInterrupt:
             LOGGER.info('*** KeyboardInterrupt ***')
 
-        if self.__best_val_score is None or self.__best_val_score_step is None:
+        if self.__best_val_score is None:
             self.param.remove_ckpt()
             exit('nothing to be saved')
 
         LOGGER.info('[training completed, %0.2f sec in total]' % (time() - start_time))
-        LOGGER.info(' - best val f1 score: %0.2f at step %i' % (self.__best_val_score, self.__best_val_score_step))
         if self.data_parallel:
             model_wts = self.model_token_cls.module.state_dict()
         else:
             model_wts = self.model_token_cls.state_dict()
         torch.save({
-            'model_state_dict': model_wts,
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict(),
             'step': self.__step,
             'epoch': self.__epoch,
-            'best_val_f1_score': self.__best_val_score,
-            'best_val_f1_score_step': self.__best_val_score_step,
-            'best_model_state_dict': self.__best_model_wts
+            'model_state_dict': model_wts,
+            'best_val_score': self.__best_val_score,
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict()
         }, os.path.join(self.param.checkpoint_dir, 'model.pt'))
         with open(os.path.join(self.param.checkpoint_dir, 'label_to_id.json'), 'w') as f:
             json.dump(self.label_to_id, f)
@@ -432,31 +422,27 @@ class TransformerTokenClassification:
         LOGGER.info('ckpt saved at %s' % self.param.checkpoint_dir)
 
     def __epoch_train(self, data_loader):
-        """ train on single epoch return flag which is True if training has been completed """
+        """ train on single epoch, returning flag which is True if training has been completed """
         self.model_token_cls.train()
         for i, encode in enumerate(data_loader, 1):
             # update model
             encode = {k: v.to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
-            model_outputs = self.model_token_cls(**encode)
-            loss, _ = model_outputs[0:2]
+            loss = self.model_token_cls(**encode)[0]
             if self.data_parallel:
                 loss = torch.mean(loss)
             loss.backward()
-            if self.param('clip') is not None:
-                nn.utils.clip_grad_norm_(self.model_token_cls.parameters(), self.param('clip'))
-
             # optimizer and scheduler step
             self.optimizer.step()
             self.scheduler.step()
-
             # log instantaneous accuracy, loss, and learning rate
             inst_loss = loss.cpu().detach().item()
             inst_lr = self.optimizer.param_groups[0]['lr']
             self.writer.add_scalar('train/loss', inst_loss, self.__step)
             self.writer.add_scalar('train/learning_rate', inst_lr, self.__step)
             if self.__step % PROGRESS_INTERVAL == 0:
-                LOGGER.info(' * (training step %i) loss: %.3f, lr: %0.8f' % (self.__step, inst_loss, inst_lr))
+                LOGGER.info('[epoch %i] * (training step %i) loss: %.3f, lr: %0.8f'
+                            % (self.__epoch, self.__step, inst_loss, inst_lr))
             self.__step += 1
             # break
             if self.__step >= self.param('total_step'):
@@ -466,7 +452,7 @@ class TransformerTokenClassification:
         return False
 
     def __epoch_valid(self, data_loader, prefix: str='valid'):
-        """ validation/test """
+        """ validation/test, returning flag which is True if early stop condition was applied """
         self.model_token_cls.eval()
         list_loss, seq_pred, seq_true = [], [], []
         for encode in data_loader:
@@ -496,14 +482,12 @@ class TransformerTokenClassification:
         self.writer.add_scalar('%s/accuracy' % prefix, accuracy_score(seq_true, seq_pred), self.__epoch)
         self.writer.add_scalar('%s/loss' % prefix, float(sum(list_loss) / len(list_loss)), self.__epoch)
         if prefix == 'valid':
-            f1 = f1_score(seq_true, seq_pred)
-            if self.__best_val_score is None or f1 > self.__best_val_score:
-                self.__best_val_score = f1
-                self.__best_val_score_step = self.__step
-                if self.data_parallel:
-                    self.__best_model_wts = copy.deepcopy(self.model_token_cls.module.state_dict())
-                else:
-                    self.__best_model_wts = copy.deepcopy(self.model_token_cls.state_dict())
+            score = f1_score(seq_true, seq_pred)
+            if self.__best_val_score is None or score > self.__best_val_score:
+                self.__best_val_score = score
+            if self.param('early_stop') and self.__best_val_score - score > self.param('early_stop'):
+                return True
+        return False
 
 
 def get_options():
@@ -520,7 +504,6 @@ def get_options():
     parser.add_argument('-b', '--batch-size', help='batch size', default=16, type=int)
     parser.add_argument('--random-seed', help='random seed', default=1234, type=int)
     parser.add_argument('--lr', help='learning rate', default=2e-5, type=float)
-    parser.add_argument('--clip', help='gradient clip', default=None, type=float)
     parser.add_argument('--optimizer', help='optimizer', default='adam', type=str)
     parser.add_argument('--scheduler', help='scheduler', default='linear', type=str)
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
@@ -530,6 +513,7 @@ def get_options():
                         type=int)
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
+    parser.add_argument('--early-stop', help='value of accuracy drop for early stop', default=0.1, type=float)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
     parser.add_argument('--fp16', help='fp16', action='store_true')
     return parser.parse_args()
@@ -544,7 +528,6 @@ if __name__ == '__main__':
         transformer=opt.transformer,
         random_seed=opt.random_seed,
         lr=opt.lr,
-        clip=opt.clip,
         optimizer=opt.optimizer,
         scheduler=opt.scheduler,
         total_step=opt.total_step,
@@ -553,18 +536,23 @@ if __name__ == '__main__':
         batch_size=opt.batch_size,
         max_seq_length=opt.max_seq_length,
         inference_mode=opt.inference_mode,
+        early_stop=opt.early_stop,
         fp16=opt.fp16
     )
     if classifier.inference_mode:
-        while True:
-            _inp = input('input sentence >>>')
-            if _inp == 'q':
-                break
-            elif _inp == '':
-                continue
-            else:
-                predictions = classifier.predict([_inp])
-                print(predictions)
+
+        predictions = classifier.predict(['I live in London', '東京は今日も暑いです'])
+        print(predictions)
+
+        # while True:
+        #     _inp = input('input sentence >>>')
+        #     if _inp == 'q':
+        #         break
+        #     elif _inp == '':
+        #         continue
+        #     else:
+        #         predictions = classifier.predict([_inp])
+        #         print(predictions)
 
     else:
         classifier.train()
