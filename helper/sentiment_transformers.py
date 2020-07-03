@@ -29,29 +29,16 @@ from torch.utils.tensorboard import SummaryWriter
 from glob import glob
 from logging.config import dictConfig
 
-dictConfig(
-    dict(
-        version=1,
-        formatters={'f': {'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'}},
-        handlers={'h': {'class': 'logging.StreamHandler', 'formatter': 'f', 'level': logging.DEBUG}},
-        root={'handlers': ['h'], 'level': logging.DEBUG}
-    )
-)
+dictConfig({
+    "version": 1,
+    "formatters": {'f': {'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'}},
+    "handlers": {'h': {'class': 'logging.StreamHandler', 'formatter': 'f', 'level': logging.DEBUG}},
+    "root": {'handlers': ['h'], 'level': logging.DEBUG}})
 LOGGER = logging.getLogger()
 NUM_WORKER = int(os.getenv("NUM_WORKER", '4'))
 PROGRESS_INTERVAL = int(os.getenv("PROGRESS_INTERVAL", '100'))
 CACHE_DIR = os.getenv("CACHE_DIR", './cache')
 CKPT_DIR = os.getenv("CKPT_DIR", './ckpt')
-VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION = {
-    'xlm-roberta-large': transformers.XLMRobertaForSequenceClassification,
-    'xlm-roberta-base': transformers.XLMRobertaForSequenceClassification,
-    'bert-base-multilingual-cased': transformers.BertForSequenceClassification
-}
-VALID_TOKENIZER = {
-    'xlm-roberta-large': transformers.XLMRobertaTokenizer,
-    'xlm-roberta-base': transformers.XLMRobertaTokenizer,
-    'bert-base-multilingual-cased': transformers.BertTokenizer
-}
 
 
 def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
@@ -72,7 +59,7 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
                 _label_to_id[unique_label] = len(_label_to_id)
         list_label = [int(_label_to_id[l]) for l in list_label]
         assert len(list_label) == len(list_text)
-        return _label_to_id, (list_text, list_label)
+        return _label_to_id, {"data": list_text, "label": list_label}
 
     data_field, label_field = torchtext.data.Field(sequential=True), torchtext.data.Field(sequential=False)
     if data_name == 'imdb':
@@ -82,193 +69,81 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
     else:
         raise ValueError('unknown dataset: %s' % data_name)
 
-    data_split, data = list(), None
-
+    data_split, data = dict(), None
     for name, it in zip(['train', 'valid', 'test'], iterator_split):
         label_to_id, data = decode_data(it, _label_to_id=label_to_id)
-        data_split.append(data)
-        LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data[0])))
+        data_split[name] = data
+        LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data['data'])))
     return data_split, label_to_id
 
 
-def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
-    """ Create a schedule with a learning rate that decreases linearly after
-    linearly increasing during a warmup period.
-    """
+class Dataset(torch.utils.data.Dataset):
+    """ torch.utils.data.Dataset with transformer tokenizer """
 
-    def lr_lambda(current_step):
-        if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
-        return max(
-            0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps))
-        )
-
-    return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
-
-
-class AdamW(torch.optim.Optimizer):
-    """ Implements Adam algorithm with weight decay fix.
-
-    Parameters:
-        lr (float): learning rate. Default 1e-3.
-        betas (tuple of 2 floats): Adams beta parameters (b1, b2). Default: (0.9, 0.999)
-        eps (float): Adams epsilon. Default: 1e-6
-        weight_decay (float): Weight decay. Default: 0.0
-        correct_bias (bool): can be set to False to avoid correcting bias in Adam (e.g. like in Bert TF repository). Default True.
-    """
-
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-6, weight_decay=0.0, correct_bias=True):
-        if lr < 0.0:
-            raise ValueError("Invalid learning rate: {} - should be >= 0.0".format(lr))
-        if not 0.0 <= betas[0] < 1.0:
-            raise ValueError("Invalid beta parameter: {} - should be in [0.0, 1.0[".format(betas[0]))
-        if not 0.0 <= betas[1] < 1.0:
-            raise ValueError("Invalid beta parameter: {} - should be in [0.0, 1.0[".format(betas[1]))
-        if not 0.0 <= eps:
-            raise ValueError("Invalid epsilon value: {} - should be >= 0.0".format(eps))
-        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, correct_bias=correct_bias)
-        super().__init__(params, defaults)
-
-    def step(self, closure=None):
-        """Performs a single optimization step.
-
-        Arguments:
-            closure (callable, optional): A closure that reevaluates the model
-                and returns the loss.
-        """
-        loss = None
-        if closure is not None:
-            loss = closure()
-
-        for group in self.param_groups:
-            for p in group["params"]:
-                if p.grad is None:
-                    continue
-                grad = p.grad.data
-                if grad.is_sparse:
-                    raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
-
-                state = self.state[p]
-
-                # State initialization
-                if len(state) == 0:
-                    state["step"] = 0
-                    # Exponential moving average of gradient values
-                    state["exp_avg"] = torch.zeros_like(p.data)
-                    # Exponential moving average of squared gradient values
-                    state["exp_avg_sq"] = torch.zeros_like(p.data)
-
-                exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
-                beta1, beta2 = group["betas"]
-
-                state["step"] += 1
-
-                # Decay the first and second moment running average coefficient
-                # In-place operations to update the averages at the same time
-                exp_avg.mul_(beta1).add_(1.0 - beta1, grad)
-                exp_avg_sq.mul_(beta2).addcmul_(1.0 - beta2, grad, grad)
-                denom = exp_avg_sq.sqrt().add_(group["eps"])
-
-                step_size = group["lr"]
-                if group["correct_bias"]:  # No bias correction for Bert
-                    bias_correction1 = 1.0 - beta1 ** state["step"]
-                    bias_correction2 = 1.0 - beta2 ** state["step"]
-                    step_size = step_size * math.sqrt(bias_correction2) / bias_correction1
-
-                p.data.addcdiv_(-step_size, exp_avg, denom)
-
-                # Just adding the square of the weights to the loss function is *not*
-                # the correct way of using L2 regularization/weight decay with Adam,
-                # since that will interact with the m and v parameters in strange ways.
-                #
-                # Instead we want to decay the weights in a manner that doesn't interact
-                # with the m/v parameters. This is equivalent to adding the square
-                # of the weights to the loss with plain (non-momentum) SGD.
-                # Add weight decay at the end (fixed version)
-                if group["weight_decay"] > 0.0:
-                    p.data.add_(-group["lr"] * group["weight_decay"], p.data)
-
-        return loss
-
-
-class TokenEncoder:
-    """ Token encoder with transformers tokenizer """
-
-    def __init__(self,
-                 transformer: str,
-                 max_seq_length: int = None):
-        self.tokenizer = VALID_TOKENIZER[transformer].from_pretrained(transformer, cache_dir=CACHE_DIR)
+    def __init__(self, data: list, transformer_tokenizer, pad_token_label_id,
+                 max_seq_length: int = None, label: list = None, pad_to_max_length: bool = True):
+        self.data = data  # list of half-space split tokens
+        self.label = label  # list of label sequence
+        self.pad_to_max_length = pad_to_max_length
+        self.tokenizer = transformer_tokenizer
+        self.pad_token_label_id = pad_token_label_id
         if max_seq_length and max_seq_length > self.tokenizer.max_len:
             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
-        LOGGER.info('max_sequence_length (LM max_sequence_length): %i (%i)'
-                    % (self.max_seq_length, self.tokenizer.max_len))
-
-    def __call__(self, text):
-        tokens_dict = self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
-        token_ids = tokens_dict['input_ids']
-        attention_mask = tokens_dict['attention_mask']
-        return token_ids, attention_mask
-
-
-class Dataset(torch.utils.data.Dataset):
-    """ torch.utils.data.Dataset instance """
-
-    def __init__(self,
-                 data: list,
-                 token_encoder,
-                 label: list=None):
-        self.data = data
-        self.label = label
-        self.token_encoder = token_encoder
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        token_ids, attention_mask = self.token_encoder(self.data[idx])
-        out_data = torch.tensor(token_ids, dtype=torch.long)
-        attention_mask = torch.tensor(attention_mask, dtype=torch.float32)
-        if self.label is None:
-            return out_data, attention_mask
-        else:
-            out_label = torch.tensor(self.label[idx], dtype=torch.long)
-            return out_data, attention_mask, out_label
+        encode = self.tokenizer.encode_plus(
+            ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
+        encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
+        if self.label is not None:
+            assert len(self.label[idx]) == len(self.data[idx])
+            # Use the real label id for the first token of the word, and padding ids for the remaining tokens
+            fixed_label = list(chain(*[
+                [label] + [self.pad_token_label_id] * (len(self.tokenizer.tokenize(word)) - 1)
+                for label, word in zip(self.label[idx], self.data[idx])]))
+            if encode['input_ids'][0] in self.tokenizer.all_special_ids:
+                fixed_label = [self.pad_token_label_id] + fixed_label
+            fixed_label += [self.pad_token_label_id] * (len(encode['input_ids']) - len(fixed_label))
+            encode['labels'] = fixed_label
+            encode_tensor['labels'] = torch.tensor(fixed_label, dtype=torch.long)
+        return encode_tensor
 
 
-class ParameterManager:
-    """ Parameter manager for model training """
+class Argument:
+    """ Model training arguments manager """
 
-    def __init__(self,
-                 prefix: str = None,
-                 checkpoint: str = None,
-                 **kwargs):
-
-        """ Parameter manager for model training
+    def __init__(self, prefix: str = None, checkpoint: str = None, **kwargs):
+        """  Model training arguments manager
 
          Parameter
         -------------------
         prefix: prefix to filename
         checkpoint: existing checkpoint name if you want to load
-        kwargs: model parameters
+        kwargs: model arguments
         """
-        self.checkpoint_dir, self.parameter = self.__versioning(kwargs, checkpoint, prefix)
+        self.checkpoint_dir, self.parameter = self.__version(kwargs, checkpoint, prefix)
         LOGGER.info('checkpoint: %s' % self.checkpoint_dir)
         for k, v in self.parameter.items():
-            LOGGER.info(' - [param] %s: %s' % (k, str(v)))
-
-    def __call__(self, key):
-        """ retrieve a parameter """
-        if key not in self.parameter.keys():
-            raise ValueError('unknown parameter %s' % key)
-        return self.parameter[key]
+            LOGGER.info(' - [arg] %s: %s' % (k, str(v)))
+        self.__dict__.update(self.parameter)
 
     def remove_ckpt(self):
         shutil.rmtree(self.checkpoint_dir)
 
     @staticmethod
-    def __versioning(parameter: dict = None, checkpoint: str = None, prefix: str = None):
-        """ Checkpoint versioner: Either of `config` or `checkpoint` need to be specified (`config` has priority)
+    def md5(file_name):
+        """ get MD5 checksum """
+        hash_md5 = hashlib.md5()
+        with open(file_name, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+
+    def __version(self, parameter: dict = None, checkpoint: str = None, prefix: str = None):
+        """ Checkpoint version
 
          Parameter
         ---------------------
@@ -281,15 +156,6 @@ class ParameterManager:
         parameter: parameter
         """
 
-        def random_string(string_length=10, exceptions: list = None):
-            """ Generate a random string of fixed length """
-            while True:
-                letters = string.ascii_lowercase
-                random_letters = ''.join(random.choice(letters) for i in range(string_length))
-                if exceptions is None or random_letters not in exceptions:
-                    break
-            return random_letters
-
         if checkpoint is None and parameter is None:
             raise ValueError('either of `checkpoint` or `parameter` is needed.')
 
@@ -297,8 +163,8 @@ class ParameterManager:
             LOGGER.info('issue new checkpoint id')
             # check if there are any checkpoints with same hyperparameters
             version_name = []
-            for parameter_path in glob(os.path.join(CKPT_DIR, '*/hyperparameters.json')):
-                _dir = parameter_path.replace('/hyperparameters.json', '')
+            for parameter_path in glob(os.path.join(CKPT_DIR, '*/parameter.json')):
+                _dir = parameter_path.replace('/parameter.json', '')
                 _dict = json.load(open(parameter_path))
                 version_name.append(_dir.split('/')[-1])
                 if parameter == _dict:
@@ -310,52 +176,45 @@ class ParameterManager:
                     else:
                         exit()
 
-            new_checkpoint = random_string(exceptions=version_name)
-            if prefix:
-                new_checkpoint = '_'.join([prefix, new_checkpoint])
-            new_checkpoint_path = os.path.join(CKPT_DIR, new_checkpoint)
-            os.makedirs(new_checkpoint_path, exist_ok=True)
-            with open(os.path.join(new_checkpoint_path, 'hyperparameters.json'), 'w') as _f:
+            with open(os.path.join(CKPT_DIR, 'tmp.json'), 'w') as _f:
                 json.dump(parameter, _f)
-            return new_checkpoint_path, parameter
+            new_checkpoint = self.md5(os.path.join(CKPT_DIR, 'tmp.json'))
+            new_checkpoint = '_'.join([prefix, new_checkpoint]) if prefix else new_checkpoint
+            new_checkpoint_dir = os.path.join(CKPT_DIR, new_checkpoint)
+            os.makedirs(new_checkpoint_dir, exist_ok=True)
+            shutil.move(os.path.join(CKPT_DIR, 'tmp.json'), os.path.join(new_checkpoint_dir, 'parameter.json'))
+            return new_checkpoint_dir, parameter
 
         else:
             LOGGER.info('load existing checkpoint')
-            checkpoints = glob(os.path.join(CKPT_DIR, checkpoint, 'hyperparameters.json'))
+            checkpoints = glob(os.path.join(CKPT_DIR, checkpoint, 'parameter.json'))
             if len(checkpoints) >= 2:
                 raise ValueError('Checkpoints are duplicated: %s' % str(checkpoints))
             elif len(checkpoints) == 0:
                 raise ValueError('No checkpoint: %s' % os.path.join(CKPT_DIR, checkpoint))
             else:
                 parameter = json.load(open(checkpoints[0]))
-                target_checkpoints_path = checkpoints[0].replace('/hyperparameters.json', '')
+                target_checkpoints_path = checkpoints[0].replace('/parameter.json', '')
                 return target_checkpoints_path, parameter
 
 
 class TransformerSequenceClassification:
     """ finetune transformers on text classification """
 
-    def __init__(self,
-                 dataset: str,
-                 batch_size_validation: int = None,
-                 checkpoint: str = None,
-                 inference_mode: bool = False,
-                 **kwargs):
-        """ finetune transformers on text classification """
+    def __init__(self, dataset: str, batch_size_validation: int = None,
+                 checkpoint: str = None, inference_mode: bool = False, **kwargs):
         self.inference_mode = inference_mode
-        if self.inference_mode:
-            LOGGER.info('*** initialize network (INFERENCE MODE) ***')
-        else:
-            LOGGER.info('*** initialize network ***')
+        LOGGER.info('*** initialize network (INFERENCE MODE: %s) ***' % str(self.inference_mode))
 
-        # checkpoint versioning
-        self.param = ParameterManager(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
-        self.batch_size_validation = batch_size_validation if batch_size_validation else self.param('batch_size')
+        # checkpoint version
+        self.args = Argument(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
+        self.batch_size_validation = batch_size_validation if batch_size_validation else self.args.batch_size
 
         # fix random seed
-        random.seed(self.param('random_seed'))
-        np.random.seed(self.param('random_seed'))
-        torch.manual_seed(self.param('random_seed'))
+        random.seed(self.args.random_seed)
+        transformers.set_seed(self.args.random_seed)
+        torch.manual_seed(self.args.random_seed)
+        torch.cuda.manual_seed_all(self.args.random_seed)
 
         # model/dataset setup
         stats, label_to_id = self.load_ckpt()
@@ -363,106 +222,103 @@ class TransformerSequenceClassification:
             if stats is None or label_to_id is None:
                 raise ValueError('As no checkpoints found, unable to perform inference.')
             self.dataset_split, self.label_to_id = None, label_to_id
-            self.token_encoder = TokenEncoder(self.param('transformer'))
             self.writer = None
         else:
-            self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
-            self.token_encoder = TokenEncoder(self.param('transformer'), max_seq_length=self.param('max_seq_length'))
-            self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
-
-        self.id_to_label = dict([(str(v), str(k)) for k, v in self.label_to_id.items()])
-        self.model_seq_cls = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')].from_pretrained(
-            self.param('transformer'),
+            self.dataset_split, self.label_to_id = get_dataset(self.args.dataset, label_to_id=label_to_id)
+            self.writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
+        self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
+        self.config = transformers.AutoConfig.from_pretrained(
+            self.args.transformer,
+            num_labels=len(self.id_to_label),
+            id2label=self.id_to_label,
+            label2id=self.label_to_id,
             cache_dir=CACHE_DIR,
-            num_labels=len(list(self.id_to_label.keys())),
-            output_hidden_states=True
         )
-
-        # load checkpoint
-        if stats is not None:
-            self.__step = stats['step']  # num of training step
-            self.__epoch = stats['epoch']  # num of epoch
-            self.__best_val_accuracy = stats['best_val_accuracy']
-            self.__best_val_accuracy_step = stats['best_val_accuracy_step']
-            if self.inference_mode:
-                self.__best_model_wts = None
-                self.model_seq_cls.load_state_dict(stats['best_model_state_dict'])
-                LOGGER.info('use best ckpt from step %i / %i' % (self.__best_val_accuracy_step, self.__step))
-            else:
-                self.__best_model_wts = stats['best_model_state_dict']
-                self.model_seq_cls.load_state_dict(stats['model_state_dict'])
-            del stats
-        else:
-            self.__step = 0
-            self.__epoch = 0
-            self.__best_val_accuracy = None
-            self.__best_val_accuracy_step = None
-            self.__best_model_wts = None
-
+        self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
+            self.args.transformer, config=self.config
+        )
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
         # optimizer
         if self.inference_mode:
             self.optimizer = self.scheduler = None
         else:
-            if self.param("optimizer") == 'adamw':
-                self.optimizer = AdamW(
-                    self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
-            elif self.param("optimizer") == 'adam':
+            if self.args.optimizer == 'adamw':
+                self.optimizer = transformers.AdamW(
+                    self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+            elif self.args.optimizer == 'adam':
                 self.optimizer = optim.Adam(
-                    self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
-            elif self.param("optimizer") == 'sgd':
+                    self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+            elif self.args.optimizer == 'sgd':
                 self.optimizer = optim.SGD(
-                    self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+                    self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
             else:
-                raise ValueError('bad optimizer: %s' % self.param("optimizer"))
+                raise ValueError('bad optimizer: %s' % self.args.optimizer)
 
             # scheduler
-            if self.param('scheduler') == 'constant':
+            if self.args.scheduler == 'constant':
                 self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lambda _: 1, last_epoch=-1)
-            elif self.param('scheduler') == 'linear':
-                self.scheduler = get_linear_schedule_with_warmup(
+            elif self.args.scheduler == 'linear':
+                self.scheduler = transformers.get_linear_schedule_with_warmup(
                     self.optimizer,
-                    num_warmup_steps=self.param('warmup_step'),
-                    num_training_steps=self.param('total_step'))
+                    num_warmup_steps=self.args.warmup_step,
+                    num_training_steps=self.args.total_step)
             else:
-                raise ValueError('bad scheduler: %s' % self.param('scheduler'))
+                raise ValueError('unknown scheduler: %s' % self.args.scheduler)
 
-            # apply checkpoint statistics to optimizer/scheduler
-            if stats is not None:
-                self.optimizer.load_state_dict(stats['optimizer_state_dict'])
-                self.scheduler.load_state_dict(stats['scheduler_state_dict'])
+        # load checkpoint
+        self.__step = 0
+        self.__epoch = 0
+        self.__best_val_score = None
+        if stats is not None:
+            self.__step = stats['step']  # num of training step
+            self.__epoch = stats['epoch']  # num of epoch
+            self.__best_val_score = stats['best_val_score']
+            self.model.load_state_dict(stats['model_state_dict'])
+
+        # apply checkpoint statistics to optimizer/scheduler
+        if stats is not None and self.optimizer is not None and self.scheduler is not None:
+            self.optimizer.load_state_dict(stats['optimizer_state_dict'])
+            self.scheduler.load_state_dict(stats['scheduler_state_dict'])
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
-        self.data_parallel = False
-        if self.n_gpu == 1:
-            self.model_seq_cls = self.model_seq_cls.cuda()
-        elif self.n_gpu > 1:  # TODO: test multi-GPUs
-            self.data_parallel = True
-            self.model_seq_cls = torch.nn.DataParallel(self.model_seq_cls.cuda())
-            LOGGER.info('WARNING: torch.nn.DataParallel is not tested')
-        else:
-            self.n_gpu = 0
-        LOGGER.info('running on %i GPUs' % self.n_gpu)
         self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
+        self.model.to(self.device)
+
+        # GPU mixture precision
+        self.scale_loss = None
+        if self.args.fp16:
+            try:
+                from apex import amp  # noqa: F401
+                self.model, self.optimizer = amp.initialize(
+                    self.model, self.optimizer, opt_level='O1')
+                self.scale_loss = amp.scale_loss
+                LOGGER.info('using `apex.amp`')
+            except ImportError:
+                raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
+
+        # multi-gpus
+        if self.n_gpu > 1:
+            # multi-gpu training (should be after apex fp16 initialization)
+            self.model = torch.nn.DataParallel(self.model.cuda())
+            LOGGER.info('using `torch.nn.DataParallel`')
+        LOGGER.info('running on %i GPUs' % self.n_gpu)
 
     def load_ckpt(self):
-        checkpoint_file = os.path.join(self.param.checkpoint_dir, 'model.pt')
-        label_id_file = os.path.join(self.param.checkpoint_dir, 'label_to_id.json')
+        checkpoint_file = os.path.join(self.args.checkpoint_dir, 'model.pt')
+        label_id_file = os.path.join(self.args.checkpoint_dir, 'label_to_id.json')
         if os.path.exists(checkpoint_file):
             assert os.path.exists(label_id_file)
             LOGGER.info('load ckpt from %s' % checkpoint_file)
-            ckpt = torch.load(checkpoint_file, map_location='cpu')
-            ckpt_dict = dict(
-                step=ckpt['step'],
-                epoch=ckpt['epoch'],
-                model_state_dict=ckpt['model_state_dict'],
-                best_val_accuracy=ckpt['best_val_accuracy'],
-                best_val_accuracy_step=ckpt['best_val_accuracy_step'],
-                best_model_wts=ckpt['best_model_state_dict'],
-                best_model_state_dict=ckpt['best_model_state_dict'],
-                optimizer_state_dict=ckpt['optimizer_state_dict'],
-                scheduler_state_dict=ckpt['scheduler_state_dict'],
-            )
+            ckpt = torch.load(checkpoint_file, map_location='cpu')  # allocate stats on cpu
+            ckpt_dict = {
+                "step": ckpt['step'],
+                "epoch": ckpt['epoch'],
+                "model_state_dict": ckpt['model_state_dict'],
+                "best_val_score": ckpt['best_val_score'],
+                "optimizer_state_dict": ckpt['optimizer_state_dict'],
+                "scheduler_state_dict": ckpt['scheduler_state_dict']
+            }
             label_to_id = json.load(open(label_id_file, 'r'))
             return ckpt_dict, label_to_id
         else:
@@ -478,14 +334,14 @@ class TransformerSequenceClassification:
         :return: (prediction, prob)
             prediction is a list of predicted label, and prob is a list of dictionary with each probability
         """
-        self.model_seq_cls.eval()
+        self.model.eval()
         data_loader = torch.utils.data.DataLoader(
             Dataset(x, token_encoder=self.token_encoder), batch_size=min(batch_size, len(x)))
         prediction, prob = [], []
         for inputs, attn_mask in data_loader:
             inputs = inputs.to(self.device)
             attn_mask = attn_mask.to(self.device)
-            outputs = self.model_seq_cls(inputs, attention_mask=attn_mask)
+            outputs = self.model(inputs, attention_mask=attn_mask)
             logit = outputs[0]
             _, _pred = torch.max(logit, dim=1)
             _pred_list = _pred.cpu().tolist()
@@ -498,43 +354,37 @@ class TransformerSequenceClassification:
         return prediction, prob
 
     def train(self):
+        LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger.log')))
         if self.inference_mode:
             raise ValueError('model is on an inference mode')
 
-        # setup data loader
+        LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
         start_time = time()
-        LOGGER.info('setup dataset')
-        data_loader_train = torch.utils.data.DataLoader(
-            Dataset(self.dataset_split[0][0], label=self.dataset_split[0][1], token_encoder=self.token_encoder),
-            batch_size=self.param('batch_size'),
-            shuffle=True,
+        shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id}
+        data_loader = {k: torch.utils.data.DataLoader(
+            Dataset(**self.dataset_split.pop(k), **shared),
             num_workers=NUM_WORKER,
-            drop_last=True)
-        data_loader_valid = torch.utils.data.DataLoader(
-            Dataset(self.dataset_split[1][0], label=self.dataset_split[1][1], token_encoder=self.token_encoder),
-            batch_size=self.batch_size_validation,
-            num_workers=NUM_WORKER)
-        if len(self.dataset_split) > 2:
-            data_loader_test = torch.utils.data.DataLoader(
-                Dataset(self.dataset_split[2][0], label=self.dataset_split[2][1], token_encoder=self.token_encoder),
-                batch_size=self.batch_size_validation,
-                num_workers=NUM_WORKER
-            )
-        else:
-            data_loader_test = None
-
-        LOGGER.info('start training from step %i (epoch: %i)' % (self.__step, self.__epoch))
+            batch_size=self.args.batch_size if k == 'train' else self.batch_size_validation,
+            shuffle=k == 'train',
+            drop_last=k == 'train')
+            for k in ['train', 'valid']}
+        data_loader_test = {k: torch.utils.data.DataLoader(
+            Dataset(**v, **shared),
+            num_workers=NUM_WORKER,
+            batch_size=self.batch_size_validation)
+            for k, v in self.dataset_split.items()}
+        LOGGER.info('data_loader     : %s' % str(list(data_loader.keys())))
+        LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
         try:
             with detect_anomaly():
                 while True:
-                    if_training_finish = self.__epoch_train(data_loader_train)
-                    if_early_stop = self.__epoch_valid(data_loader_valid, prefix='valid')
-
+                    if_training_finish = self.__epoch_train(data_loader['train'])
+                    if_early_stop = self.__epoch_valid(data_loader['valid'], prefix='valid')
                     if if_training_finish or if_early_stop:
-                        if data_loader_test:
-                            self.__epoch_valid(data_loader_test, prefix='test', is_valid=False)
                         break
                     self.__epoch += 1
+                for k, v in data_loader.items():
+                    self.__epoch_valid(v, prefix=k)
 
         except RuntimeError:
             LOGGER.info(traceback.format_exc())
@@ -543,85 +393,67 @@ class TransformerSequenceClassification:
         except KeyboardInterrupt:
             LOGGER.info('*** KeyboardInterrupt ***')
 
-        if self.__best_val_accuracy is None or self.__best_val_accuracy_step is None:
-            self.param.remove_ckpt()
+        if self.__best_val_score is None:
+            self.args.remove_ckpt()
             exit('nothing to be saved')
 
-        LOGGER.info('[training completed]')
-        LOGGER.info(' - best valid accuracy: %0.3f' % self.__best_val_accuracy)
-        LOGGER.info(' - best valid accuracy step: %i' % self.__best_val_accuracy_step)
-        LOGGER.info(' - full training time: %0.2f' % (time() - start_time))
-        if self.data_parallel:
-            model_wts = self.model_seq_cls.module.state_dict()
+        LOGGER.info('[training completed, %0.2f sec in total]' % (time() - start_time))
+        if self.n_gpu > 1:
+            model_wts = self.model.module.state_dict()
         else:
-            model_wts = self.model_seq_cls.state_dict()
+            model_wts = self.model.state_dict()
         torch.save({
-            'model_state_dict': model_wts,
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict(),
             'step': self.__step,
             'epoch': self.__epoch,
-            'best_val_accuracy': self.__best_val_accuracy,
-            'best_val_accuracy_step': self.__best_val_accuracy_step,
-            'best_model_state_dict': self.__best_model_wts
-        }, os.path.join(self.param.checkpoint_dir, 'model.pt'))
-        with open(os.path.join(self.param.checkpoint_dir, 'label_to_id.json'), 'w') as f:
+            'model_state_dict': model_wts,
+            'best_val_score': self.__best_val_score,
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict()
+        }, os.path.join(self.args.checkpoint_dir, 'model.pt'))
+        with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
             json.dump(self.label_to_id, f)
         self.writer.close()
-        LOGGER.info('ckpt saved at %s' % self.param.checkpoint_dir)
+        LOGGER.info('ckpt saved at %s' % self.args.checkpoint_dir)
 
     def __epoch_train(self, data_loader):
         """ train on single epoch return flag which is True if training has been completed """
-        self.model_seq_cls.train()
-
-        for i, (inputs, attn_mask, outputs) in enumerate(data_loader, 1):
-
-            inputs = inputs.to(self.device)
-            attn_mask = attn_mask.to(self.device)
-            outputs = outputs.to(self.device)
-
-            # zero the parameter gradients
+        self.model.train()
+        for i, encode in enumerate(data_loader, 1):
+            # update model
+            encode = {k: v.to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
-            # forward: output prediction and get loss
-            model_outputs = self.model_seq_cls(inputs, attention_mask=attn_mask, labels=outputs)
-            loss, logit = model_outputs[0:2]
-            if self.data_parallel:
-                loss = torch.mean(loss)
-            _, pred = torch.max(logit, 1)
-
-            # backward: calculate gradient
-            loss.backward()
-
-            # gradient clip
-            if self.param('clip') is not None:
-                nn.utils.clip_grad_norm_(self.model_seq_cls.parameters(), self.param('clip'))
-
+            loss, logit = self.model(**encode)[0:2]
+            if self.n_gpu > 1:
+                loss = loss.mean()
+            if self.args.fp16:
+                with self.scale_loss(loss, self.optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
             # optimizer and scheduler step
             self.optimizer.step()
             self.scheduler.step()
-
-            # instantaneous accuracy, loss, and learning rate
-            inst_accuracy = ((pred == outputs).cpu().float().mean()).item()
-            inst_loss = loss.cpu().item()
+            # log instantaneous accuracy, loss, and learning rate
+            _, pred = torch.max(logit, 1)
+            inst_accuracy = ((pred == encode['labels']).cpu().float().mean()).item()
+            inst_loss = loss.cpu().detach().item()
             inst_lr = self.optimizer.param_groups[0]['lr']
-            # log
             self.writer.add_scalar('train/loss', inst_loss, self.__step)
+            self.writer.add_scalar('train/learning_rate', inst_lr, self.__step)
             self.writer.add_scalar('train/accuracy', inst_accuracy, self.__step)
-            self.writer.add_scalar('learning_rate', inst_lr, self.__step)
-
             if self.__step % PROGRESS_INTERVAL == 0:
-                LOGGER.info(' * (step %i) accuracy: %.3f, loss: %.3f, lr: %0.8f'
-                            % (self.__step, inst_accuracy, inst_loss, inst_lr))
+                LOGGER.info('[epoch %i] * (training step %i) loss: %.3f, lr: %0.8f'
+                            % (self.__epoch, self.__step, inst_loss, inst_lr))
             self.__step += 1
-            if self.__step >= self.param('total_step'):
-                LOGGER.info('reached total step')
+            # break
+            if self.__step >= self.args.total_step:
+                LOGGER.info('reached maximum step')
                 return True
-
         return False
 
     def __epoch_valid(self, data_loader, prefix: str='valid', is_valid: bool = True):
         """ validation/test """
-        self.model_seq_cls.eval()
+        self.model.eval()
         list_accuracy, list_loss = [], []
         for inputs, attn_mask, outputs in data_loader:
 
@@ -629,7 +461,7 @@ class TransformerSequenceClassification:
             attn_mask = attn_mask.to(self.device)
             outputs = outputs.to(self.device)
 
-            model_outputs = self.model_seq_cls(inputs, attention_mask=attn_mask, labels=outputs)
+            model_outputs = self.model(inputs, attention_mask=attn_mask, labels=outputs)
             loss, logit = model_outputs[0:2]
             if self.data_parallel:
                 loss = torch.mean(loss)
@@ -647,9 +479,9 @@ class TransformerSequenceClassification:
             self.__best_val_accuracy = accuracy
             self.__best_val_accuracy_step = self.__step
             if self.data_parallel:
-                self.__best_model_wts = copy.deepcopy(self.model_seq_cls.module.state_dict())
+                self.__best_model_wts = copy.deepcopy(self.model.module.state_dict())
             else:
-                self.__best_model_wts = copy.deepcopy(self.model_seq_cls.state_dict())
+                self.__best_model_wts = copy.deepcopy(self.model.state_dict())
         elif self.param('tolerance') is not None:
             if self.param('tolerance') < self.__best_val_accuracy - accuracy:
                 LOGGER.info('early stop:\n - best accuracy: %0.3f \n - current accuracy: %0.3f'
@@ -657,6 +489,43 @@ class TransformerSequenceClassification:
                 return True
         return False
 
+    def __epoch_valid(self, data_loader, prefix: str='valid'):
+        """ validation/test, returning flag which is True if early stop condition was applied """
+        self.model.eval()
+        list_loss, seq_pred, seq_true = [], [], []
+        for encode in data_loader:
+            encode = {k: v.to(self.device) for k, v in encode.items()}
+            model_outputs = self.model(**encode)
+            loss, logit = model_outputs[0:2]
+            if self.n_gpu > 1:
+                loss = torch.sum(loss)
+            list_loss.append(loss.cpu().detach().item())
+            _true = encode['labels'].cpu().detach().int().tolist()
+            _pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
+            for b in range(len(_true)):
+                _pred_list, _true_list = [], []
+                for s in range(len(_true[b])):
+                    if _true[b][s] != self.pad_token_label_id:
+                        _true_list.append(self.id_to_label[_pred[b][s]])
+                        _pred_list.append(self.id_to_label[_true[b][s]])
+                assert len(_pred_list) == len(_true_list)
+                if len(_true_list) > 0:
+                    seq_true.append(_true_list)
+                    seq_pred.append(_pred_list)
+
+        LOGGER.info('[epoch %i] (%s) \n %s' % (self.__epoch, prefix, classification_report(seq_true, seq_pred)))
+        self.writer.add_scalar('%s/f1' % prefix, f1_score(seq_true, seq_pred), self.__epoch)
+        self.writer.add_scalar('%s/recall' % prefix, recall_score(seq_true, seq_pred), self.__epoch)
+        self.writer.add_scalar('%s/precision' % prefix, precision_score(seq_true, seq_pred), self.__epoch)
+        self.writer.add_scalar('%s/accuracy' % prefix, accuracy_score(seq_true, seq_pred), self.__epoch)
+        self.writer.add_scalar('%s/loss' % prefix, float(sum(list_loss) / len(list_loss)), self.__epoch)
+        if prefix == 'valid':
+            score = f1_score(seq_true, seq_pred)
+            if self.__best_val_score is None or score > self.__best_val_score:
+                self.__best_val_score = score
+            if self.args.early_stop and self.__best_val_score - score > self.args.early_stop:
+                return True
+        return False
 
 def get_options():
     parser = argparse.ArgumentParser(

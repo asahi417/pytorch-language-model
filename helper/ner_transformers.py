@@ -251,7 +251,7 @@ class TransformerTokenClassification:
             label2id=self.label_to_id,
             cache_dir=CACHE_DIR,
         )
-        self.model_token_cls = transformers.AutoModelForTokenClassification.from_pretrained(
+        self.model = transformers.AutoModelForTokenClassification.from_pretrained(
             self.args.transformer, config=self.config
         )
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
@@ -262,13 +262,13 @@ class TransformerTokenClassification:
         else:
             if self.args.optimizer == 'adamw':
                 self.optimizer = transformers.AdamW(
-                    self.model_token_cls.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+                    self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
             elif self.args.optimizer == 'adam':
                 self.optimizer = optim.Adam(
-                    self.model_token_cls.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+                    self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
             elif self.args.optimizer == 'sgd':
                 self.optimizer = optim.SGD(
-                    self.model_token_cls.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+                    self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
             else:
                 raise ValueError('bad optimizer: %s' % self.args.optimizer)
 
@@ -291,7 +291,7 @@ class TransformerTokenClassification:
             self.__step = stats['step']  # num of training step
             self.__epoch = stats['epoch']  # num of epoch
             self.__best_val_score = stats['best_val_score']
-            self.model_token_cls.load_state_dict(stats['model_state_dict'])
+            self.model.load_state_dict(stats['model_state_dict'])
 
         # apply checkpoint statistics to optimizer/scheduler
         if stats is not None and self.optimizer is not None and self.scheduler is not None:
@@ -301,15 +301,15 @@ class TransformerTokenClassification:
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
         self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
-        self.model_token_cls.to(self.device)
+        self.model.to(self.device)
 
         # GPU mixture precision
         self.scale_loss = None
         if self.args.fp16:
             try:
                 from apex import amp  # noqa: F401
-                self.model_token_cls, self.optimizer = amp.initialize(
-                    self.model_token_cls, self.optimizer, opt_level='O1')
+                self.model, self.optimizer = amp.initialize(
+                    self.model, self.optimizer, opt_level='O1', max_loss_scale=2**13, min_loss_scale=1e-5)
                 self.scale_loss = amp.scale_loss
                 LOGGER.info('using `apex.amp`')
             except ImportError:
@@ -318,7 +318,7 @@ class TransformerTokenClassification:
         # multi-gpus
         if self.n_gpu > 1:
             # multi-gpu training (should be after apex fp16 initialization)
-            self.model_token_cls = torch.nn.DataParallel(self.model_token_cls.cuda())
+            self.model = torch.nn.DataParallel(self.model.cuda())
             LOGGER.info('using `torch.nn.DataParallel`')
         LOGGER.info('running on %i GPUs' % self.n_gpu)
 
@@ -346,7 +346,7 @@ class TransformerTokenClassification:
         """ model inference """
         encode = self.tokenizer.batch_encode_plus(x)
         encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
-        logit = self.model_token_cls(**encode)[0]
+        logit = self.model(**encode)[0]
         pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
         prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
         # print([self.tokenizer.decode(i) for i in encode['input_ids']])
@@ -399,9 +399,9 @@ class TransformerTokenClassification:
 
         LOGGER.info('[training completed, %0.2f sec in total]' % (time() - start_time))
         if self.n_gpu > 1:
-            model_wts = self.model_token_cls.module.state_dict()
+            model_wts = self.model.module.state_dict()
         else:
-            model_wts = self.model_token_cls.state_dict()
+            model_wts = self.model.state_dict()
         torch.save({
             'step': self.__step,
             'epoch': self.__epoch,
@@ -417,12 +417,12 @@ class TransformerTokenClassification:
 
     def __epoch_train(self, data_loader):
         """ train on single epoch, returning flag which is True if training has been completed """
-        self.model_token_cls.train()
+        self.model.train()
         for i, encode in enumerate(data_loader, 1):
             # update model
             encode = {k: v.to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
-            loss = self.model_token_cls(**encode)[0]
+            loss = self.model(**encode)[0]
             if self.n_gpu > 1:
                 loss = loss.mean()
             if self.args.fp16:
@@ -451,11 +451,11 @@ class TransformerTokenClassification:
 
     def __epoch_valid(self, data_loader, prefix: str='valid'):
         """ validation/test, returning flag which is True if early stop condition was applied """
-        self.model_token_cls.eval()
+        self.model.eval()
         list_loss, seq_pred, seq_true = [], [], []
         for encode in data_loader:
             encode = {k: v.to(self.device) for k, v in encode.items()}
-            model_outputs = self.model_token_cls(**encode)
+            model_outputs = self.model(**encode)
             loss, logit = model_outputs[0:2]
             if self.n_gpu > 1:
                 loss = torch.sum(loss)
