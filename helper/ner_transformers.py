@@ -7,7 +7,6 @@
 - see https://huggingface.co/transformers/_modules/transformers/optimization.html#AdamW for AdamW and linear scheduler
 """
 
-import copy
 import traceback
 import argparse
 import os
@@ -131,10 +130,7 @@ class Dataset(torch.utils.data.Dataset):
 class ParameterManager:
     """ Parameter manager for model training """
 
-    def __init__(self,
-                 prefix: str = None,
-                 checkpoint: str = None,
-                 **kwargs):
+    def __init__(self, prefix: str = None, checkpoint: str = None, **kwargs):
 
         """ Parameter manager for model training
 
@@ -239,8 +235,10 @@ class TransformerTokenClassification:
         self.batch_size_validation = batch_size_validation if batch_size_validation else self.param('batch_size')
 
         # fix random seed
+        random.seed(self.param('random_seed'))
         transformers.set_seed(self.param('random_seed'))
         torch.manual_seed(self.param('random_seed'))
+        torch.cuda.manual_seed_all(self.param('random_seed'))
 
         # model/dataset setup
         stats, label_to_id = self.load_ckpt()
@@ -292,18 +290,6 @@ class TransformerTokenClassification:
             else:
                 raise ValueError('unknown scheduler: %s' % self.param('scheduler'))
 
-            # mixture precision
-            self.fp16 = False
-            if self.param('fp16'):
-                try:
-                    from apex import amp  # noqa: F401
-                    self.model_token_cls, self.optimizer = amp.initialize(
-                        self.model_token_cls, self.optimizer, opt_level='O1')
-                    self.fp16 = True
-                    LOGGER.info('using `amp`')
-                except ImportError:
-                    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-
         # load checkpoint
         self.__step = 0
         self.__epoch = 0
@@ -323,9 +309,21 @@ class TransformerTokenClassification:
         self.n_gpu = torch.cuda.device_count()
         self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
         self.model_token_cls.to(self.device)
-        self.data_parallel = False
+
+        # GPU mixture precision
+        self.scale_loss = None
+        if self.param('fp16'):
+            try:
+                from apex import amp  # noqa: F401
+                self.model_token_cls, self.optimizer = amp.initialize(
+                    self.model_token_cls, self.optimizer, opt_level='O1')
+                self.scale_loss = amp.scale_loss
+                LOGGER.info('using `apex.amp`')
+            except ImportError:
+                raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
+
+        # multi-gpus
         if self.n_gpu > 1:
-            self.data_parallel = True
             # multi-gpu training (should be after apex fp16 initialization)
             self.model_token_cls = torch.nn.DataParallel(self.model_token_cls.cuda())
             LOGGER.info('using `torch.nn.DataParallel`')
@@ -407,7 +405,7 @@ class TransformerTokenClassification:
             exit('nothing to be saved')
 
         LOGGER.info('[training completed, %0.2f sec in total]' % (time() - start_time))
-        if self.data_parallel:
+        if self.n_gpu > 1:
             model_wts = self.model_token_cls.module.state_dict()
         else:
             model_wts = self.model_token_cls.state_dict()
@@ -432,9 +430,13 @@ class TransformerTokenClassification:
             encode = {k: v.to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
             loss = self.model_token_cls(**encode)[0]
-            if self.data_parallel:
-                loss = torch.mean(loss)
-            loss.backward()
+            if self.n_gpu > 1:
+                loss = loss.mean()
+            if self.param('fp16'):
+                with self.scale_loss(loss, self.optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
             # optimizer and scheduler step
             self.optimizer.step()
             self.scheduler.step()
@@ -462,7 +464,7 @@ class TransformerTokenClassification:
             encode = {k: v.to(self.device) for k, v in encode.items()}
             model_outputs = self.model_token_cls(**encode)
             loss, logit = model_outputs[0:2]
-            if self.data_parallel:
+            if self.n_gpu > 1:
                 loss = torch.sum(loss)
             list_loss.append(loss.cpu().detach().item())
             _true = encode['labels'].cpu().detach().int().tolist()
