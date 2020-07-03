@@ -254,15 +254,17 @@ class TransformerTokenClassification:
         #     self.args.transformer, config=self.config
         # )
         # self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
-        self.config = transformers.XLMRobertaConfig.from_pretrained(
-            self.args.transformer,
-            num_labels=len(self.id_to_label),
-            id2label=self.id_to_label,
-            label2id=self.label_to_id,
-            cache_dir=CACHE_DIR
-        )
+        # self.config = transformers.XLMRobertaConfig.from_pretrained(
+        #     self.args.transformer,
+        #     num_labels=len(self.id_to_label),
+        #     id2label=self.id_to_label,
+        #     label2id=self.label_to_id,
+        #     cache_dir=CACHE_DIR
+        # )
         self.model = transformers.XLMRobertaForSequenceClassification.from_pretrained(
-            self.args.transformer, config=self.config
+            self.args.transformer,
+            cache_dir=CACHE_DIR,
+            num_labels=len(list(self.id_to_label.keys()))
         )
         self.tokenizer = transformers.XLMRobertaTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
 
