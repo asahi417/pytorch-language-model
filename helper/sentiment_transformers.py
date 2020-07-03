@@ -19,6 +19,7 @@ import transformers
 import torchtext
 import torch
 import numpy as np
+from itertools import chain
 from time import time
 from torch import optim
 from torch import nn
@@ -97,16 +98,7 @@ class Dataset(torch.utils.data.Dataset):
             ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
         encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
         if self.label is not None:
-            assert len(self.label[idx]) == len(self.data[idx])
-            # Use the real label id for the first token of the word, and padding ids for the remaining tokens
-            fixed_label = list(chain(*[
-                [label] + [self.pad_token_label_id] * (len(self.tokenizer.tokenize(word)) - 1)
-                for label, word in zip(self.label[idx], self.data[idx])]))
-            if encode['input_ids'][0] in self.tokenizer.all_special_ids:
-                fixed_label = [self.pad_token_label_id] + fixed_label
-            fixed_label += [self.pad_token_label_id] * (len(encode['input_ids']) - len(fixed_label))
-            encode['labels'] = fixed_label
-            encode_tensor['labels'] = torch.tensor(fixed_label, dtype=torch.long)
+            encode_tensor['labels'] = torch.tensor(self.label[idx], dtype=torch.long)
         return encode_tensor
 
 
@@ -465,7 +457,7 @@ def get_options():
         description='finetune transformers to sentiment analysis',
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-c', '--checkpoint', help='checkpoint to load', default=None, type=str)
-    parser.add_argument('-d', '--data', help='data conll_2003/wnut_17', default='wnut_17', type=str)
+    parser.add_argument('-d', '--data', help='data sst/imdb', default='sst', type=str)
     parser.add_argument('-t', '--transformer', help='pretrained language model', default='xlm-roberta-base', type=str)
     parser.add_argument('-m', '--max-seq-length',
                         help='max sequence length (use same length as used in pre-training if not provided)',
