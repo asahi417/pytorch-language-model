@@ -7,13 +7,11 @@
 - see https://huggingface.co/transformers/_modules/transformers/optimization.html#AdamW for AdamW and linear scheduler
 """
 
-import math
-import copy
 import traceback
 import argparse
 import os
 import random
-import string
+import hashlib
 import json
 import logging
 import shutil
@@ -201,6 +199,8 @@ class Argument:
 class TransformerSequenceClassification:
     """ finetune transformers on text classification """
 
+    pad_token_label_id = nn.CrossEntropyLoss().ignore_index
+
     def __init__(self, dataset: str, batch_size_validation: int = None,
                  checkpoint: str = None, inference_mode: bool = False, **kwargs):
         self.inference_mode = inference_mode
@@ -324,33 +324,17 @@ class TransformerSequenceClassification:
         else:
             return None, None
 
-    def predict(self,
-                x: list,
-                batch_size: int = 1):
-        """ model inference
-
-        :param x: list of input
-        :param batch_size: batch size for inference
-        :return: (prediction, prob)
-            prediction is a list of predicted label, and prob is a list of dictionary with each probability
-        """
+    def predict(self, x: list):
+        """ model inference """
         self.model.eval()
-        data_loader = torch.utils.data.DataLoader(
-            Dataset(x, token_encoder=self.token_encoder), batch_size=min(batch_size, len(x)))
-        prediction, prob = [], []
-        for inputs, attn_mask in data_loader:
-            inputs = inputs.to(self.device)
-            attn_mask = attn_mask.to(self.device)
-            outputs = self.model(inputs, attention_mask=attn_mask)
-            logit = outputs[0]
-            _, _pred = torch.max(logit, dim=1)
-            _pred_list = _pred.cpu().tolist()
-            _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
-            prediction += [self.id_to_label[str(_p)] for _p in _pred_list]
-            prob += [dict(
-                [(self.id_to_label[str(i)], float(pr))
-                 for i, pr in enumerate(_p)]
-            ) for _p in _prob_list]
+        encode = self.tokenizer.batch_encode_plus(x)
+        encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
+        logit = self.model(**encode)[0]
+        _, _pred = torch.max(logit, dim=1)
+        _pred_list = _pred.cpu().tolist()
+        _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
+        prediction = [self.id_to_label[str(_p)] for _p in _pred_list]
+        prob = [dict([(self.id_to_label[str(i)], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
         return prediction, prob
 
     def train(self):
@@ -451,111 +435,57 @@ class TransformerSequenceClassification:
                 return True
         return False
 
-    def __epoch_valid(self, data_loader, prefix: str='valid', is_valid: bool = True):
+    def __epoch_valid(self, data_loader, prefix: str='valid'):
         """ validation/test """
         self.model.eval()
         list_accuracy, list_loss = [], []
-        for inputs, attn_mask, outputs in data_loader:
-
-            inputs = inputs.to(self.device)
-            attn_mask = attn_mask.to(self.device)
-            outputs = outputs.to(self.device)
-
-            model_outputs = self.model(inputs, attention_mask=attn_mask, labels=outputs)
-            loss, logit = model_outputs[0:2]
-            if self.data_parallel:
-                loss = torch.mean(loss)
+        for encode in data_loader:
+            encode = {k: v.to(self.device) for k, v in encode.items()}
+            loss, logit = self.model(**encode)[0:2]
+            if self.n_gpu > 1:
+                loss = torch.sum(loss)
             _, pred = torch.max(logit, 1)
-            list_accuracy.append(((pred == outputs).cpu().float().mean()).item())
+            list_accuracy.append(((pred == encode['labels']).cpu().float().mean()).item())
             list_loss.append(loss.cpu().item())
 
         accuracy, loss = float(np.mean(list_accuracy)), float(np.mean(list_loss))
+        LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
         self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
         self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
-        LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
-        if not is_valid:
-            return False
-        if self.__best_val_accuracy is None or accuracy > self.__best_val_accuracy:
-            self.__best_val_accuracy = accuracy
-            self.__best_val_accuracy_step = self.__step
-            if self.data_parallel:
-                self.__best_model_wts = copy.deepcopy(self.model.module.state_dict())
-            else:
-                self.__best_model_wts = copy.deepcopy(self.model.state_dict())
-        elif self.param('tolerance') is not None:
-            if self.param('tolerance') < self.__best_val_accuracy - accuracy:
-                LOGGER.info('early stop:\n - best accuracy: %0.3f \n - current accuracy: %0.3f'
-                            % (self.__best_val_accuracy, accuracy))
-                return True
-        return False
-
-    def __epoch_valid(self, data_loader, prefix: str='valid'):
-        """ validation/test, returning flag which is True if early stop condition was applied """
-        self.model.eval()
-        list_loss, seq_pred, seq_true = [], [], []
-        for encode in data_loader:
-            encode = {k: v.to(self.device) for k, v in encode.items()}
-            model_outputs = self.model(**encode)
-            loss, logit = model_outputs[0:2]
-            if self.n_gpu > 1:
-                loss = torch.sum(loss)
-            list_loss.append(loss.cpu().detach().item())
-            _true = encode['labels'].cpu().detach().int().tolist()
-            _pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
-            for b in range(len(_true)):
-                _pred_list, _true_list = [], []
-                for s in range(len(_true[b])):
-                    if _true[b][s] != self.pad_token_label_id:
-                        _true_list.append(self.id_to_label[_pred[b][s]])
-                        _pred_list.append(self.id_to_label[_true[b][s]])
-                assert len(_pred_list) == len(_true_list)
-                if len(_true_list) > 0:
-                    seq_true.append(_true_list)
-                    seq_pred.append(_pred_list)
-
-        LOGGER.info('[epoch %i] (%s) \n %s' % (self.__epoch, prefix, classification_report(seq_true, seq_pred)))
-        self.writer.add_scalar('%s/f1' % prefix, f1_score(seq_true, seq_pred), self.__epoch)
-        self.writer.add_scalar('%s/recall' % prefix, recall_score(seq_true, seq_pred), self.__epoch)
-        self.writer.add_scalar('%s/precision' % prefix, precision_score(seq_true, seq_pred), self.__epoch)
-        self.writer.add_scalar('%s/accuracy' % prefix, accuracy_score(seq_true, seq_pred), self.__epoch)
-        self.writer.add_scalar('%s/loss' % prefix, float(sum(list_loss) / len(list_loss)), self.__epoch)
         if prefix == 'valid':
-            score = f1_score(seq_true, seq_pred)
-            if self.__best_val_score is None or score > self.__best_val_score:
-                self.__best_val_score = score
-            if self.args.early_stop and self.__best_val_score - score > self.args.early_stop:
+            if self.__best_val_score is None or accuracy > self.__best_val_score:
+                self.__best_val_score = accuracy
+            if self.args.early_stop and self.__best_val_score - accuracy > self.args.early_stop:
                 return True
         return False
+
 
 def get_options():
     parser = argparse.ArgumentParser(
         description='finetune transformers to sentiment analysis',
         formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument('--data', help='data (imdb/sst)', default='sst', type=str)
-    parser.add_argument('--transformer',
-                        help='language model (%s)' % str(VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION.keys()),
-                        default='xlm-roberta-base',
-                        type=str)
-    parser.add_argument('--max-seq-length',
+    parser.add_argument('-c', '--checkpoint', help='checkpoint to load', default=None, type=str)
+    parser.add_argument('-d', '--data', help='data conll_2003/wnut_17', default='wnut_17', type=str)
+    parser.add_argument('-t', '--transformer', help='pretrained language model', default='xlm-roberta-base', type=str)
+    parser.add_argument('-m', '--max-seq-length',
                         help='max sequence length (use same length as used in pre-training if not provided)',
                         default=128,
                         type=int)
+    parser.add_argument('-b', '--batch-size', help='batch size', default=16, type=int)
     parser.add_argument('--random-seed', help='random seed', default=1234, type=int)
     parser.add_argument('--lr', help='learning rate', default=2e-5, type=float)
-    parser.add_argument('--clip', help='gradient clip', default=None, type=float)
     parser.add_argument('--optimizer', help='optimizer', default='adam', type=str)
     parser.add_argument('--scheduler', help='scheduler', default='linear', type=str)
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
-    parser.add_argument('--batch-size', help='batch size', default=16, type=int)
     parser.add_argument('--batch-size-validation',
                         help='batch size for validation (smaller size to save memory)',
-                        default=4,
+                        default=2,
                         type=int)
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
-    parser.add_argument('--tolerance', help='early stop tolerance in terms of valid accuracy', default=None, type=float)
-    parser.add_argument('--checkpoint', help='checkpoint to load', default=None, type=str)
+    parser.add_argument('--early-stop', help='value of accuracy drop for early stop', default=0.1, type=float)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
+    parser.add_argument('--fp16', help='fp16', action='store_true')
     return parser.parse_args()
 
 
@@ -568,16 +498,16 @@ if __name__ == '__main__':
         transformer=opt.transformer,
         random_seed=opt.random_seed,
         lr=opt.lr,
-        clip=opt.clip,
         optimizer=opt.optimizer,
         scheduler=opt.scheduler,
         total_step=opt.total_step,
         warmup_step=opt.warmup_step,
-        tolerance=opt.tolerance,
         weight_decay=opt.weight_decay,
         batch_size=opt.batch_size,
         max_seq_length=opt.max_seq_length,
-        inference_mode=opt.inference_mode
+        inference_mode=opt.inference_mode,
+        early_stop=opt.early_stop,
+        fp16=opt.fp16
     )
     if classifier.inference_mode:
         while True:

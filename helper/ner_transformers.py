@@ -344,13 +344,12 @@ class TransformerTokenClassification:
 
     def predict(self, x: list):
         """ model inference """
+        self.model.eval()
         encode = self.tokenizer.batch_encode_plus(x)
         encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
         logit = self.model(**encode)[0]
         pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
         prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
-        # print([self.tokenizer.decode(i) for i in encode['input_ids']])
-        # print(prediction)
         return prediction
 
     def train(self):
