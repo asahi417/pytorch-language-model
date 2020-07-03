@@ -11,7 +11,7 @@ import traceback
 import argparse
 import os
 import random
-import string
+import hashlib
 import json
 import logging
 import shutil
@@ -127,36 +127,38 @@ class Dataset(torch.utils.data.Dataset):
         return encode_tensor
 
 
-class ParameterManager:
-    """ Parameter manager for model training """
+class Argument:
+    """ Model training arguments manager """
 
     def __init__(self, prefix: str = None, checkpoint: str = None, **kwargs):
-
-        """ Parameter manager for model training
+        """  Model training arguments manager
 
          Parameter
         -------------------
         prefix: prefix to filename
         checkpoint: existing checkpoint name if you want to load
-        kwargs: model parameters
+        kwargs: model arguments
         """
-        self.checkpoint_dir, self.parameter = self.__versioning(kwargs, checkpoint, prefix)
+        self.checkpoint_dir, self.parameter = self.__version(kwargs, checkpoint, prefix)
         LOGGER.info('checkpoint: %s' % self.checkpoint_dir)
         for k, v in self.parameter.items():
-            LOGGER.info(' - [param] %s: %s' % (k, str(v)))
-
-    def __call__(self, key):
-        """ retrieve a parameter """
-        if key not in self.parameter.keys():
-            raise ValueError('unknown parameter %s' % key)
-        return self.parameter[key]
+            LOGGER.info(' - [arg] %s: %s' % (k, str(v)))
+        self.__dict__.update(self.parameter)
 
     def remove_ckpt(self):
         shutil.rmtree(self.checkpoint_dir)
 
     @staticmethod
-    def __versioning(parameter: dict = None, checkpoint: str = None, prefix: str = None):
-        """ Checkpoint versioner: Either of `config` or `checkpoint` need to be specified (`config` has priority)
+    def md5(file_name):
+        """ get MD5 checksum """
+        hash_md5 = hashlib.md5()
+        with open(file_name, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+
+    def __version(self, parameter: dict = None, checkpoint: str = None, prefix: str = None):
+        """ Checkpoint version
 
          Parameter
         ---------------------
@@ -169,15 +171,6 @@ class ParameterManager:
         parameter: parameter
         """
 
-        def random_string(string_length=10, exceptions: list = None):
-            """ Generate a random string of fixed length """
-            while True:
-                letters = string.ascii_lowercase
-                random_letters = ''.join(random.choice(letters) for i in range(string_length))
-                if exceptions is None or random_letters not in exceptions:
-                    break
-            return random_letters
-
         if checkpoint is None and parameter is None:
             raise ValueError('either of `checkpoint` or `parameter` is needed.')
 
@@ -185,8 +178,8 @@ class ParameterManager:
             LOGGER.info('issue new checkpoint id')
             # check if there are any checkpoints with same hyperparameters
             version_name = []
-            for parameter_path in glob(os.path.join(CKPT_DIR, '*/hyperparameters.json')):
-                _dir = parameter_path.replace('/hyperparameters.json', '')
+            for parameter_path in glob(os.path.join(CKPT_DIR, '*/parameter.json')):
+                _dir = parameter_path.replace('/parameter.json', '')
                 _dict = json.load(open(parameter_path))
                 version_name.append(_dir.split('/')[-1])
                 if parameter == _dict:
@@ -198,25 +191,25 @@ class ParameterManager:
                     else:
                         exit()
 
-            new_checkpoint = random_string(exceptions=version_name)
-            if prefix:
-                new_checkpoint = '_'.join([prefix, new_checkpoint])
-            new_checkpoint_path = os.path.join(CKPT_DIR, new_checkpoint)
-            os.makedirs(new_checkpoint_path, exist_ok=True)
-            with open(os.path.join(new_checkpoint_path, 'hyperparameters.json'), 'w') as _f:
+            with open(os.path.join(CKPT_DIR, 'tmp.json'), 'w') as _f:
                 json.dump(parameter, _f)
-            return new_checkpoint_path, parameter
+            new_checkpoint = self.md5(os.path.join(CKPT_DIR, 'tmp.json'))
+            new_checkpoint = '_'.join([prefix, new_checkpoint]) if prefix else new_checkpoint
+            new_checkpoint_dir = os.path.join(CKPT_DIR, new_checkpoint)
+            os.makedirs(new_checkpoint_dir, exist_ok=True)
+            shutil.move(os.path.join(CKPT_DIR, 'tmp.json'), os.path.join(new_checkpoint_dir, 'parameter.json'))
+            return new_checkpoint_dir, parameter
 
         else:
             LOGGER.info('load existing checkpoint')
-            checkpoints = glob(os.path.join(CKPT_DIR, checkpoint, 'hyperparameters.json'))
+            checkpoints = glob(os.path.join(CKPT_DIR, checkpoint, 'parameter.json'))
             if len(checkpoints) >= 2:
                 raise ValueError('Checkpoints are duplicated: %s' % str(checkpoints))
             elif len(checkpoints) == 0:
                 raise ValueError('No checkpoint: %s' % os.path.join(CKPT_DIR, checkpoint))
             else:
                 parameter = json.load(open(checkpoints[0]))
-                target_checkpoints_path = checkpoints[0].replace('/hyperparameters.json', '')
+                target_checkpoints_path = checkpoints[0].replace('/parameter.json', '')
                 return target_checkpoints_path, parameter
 
 
@@ -230,15 +223,15 @@ class TransformerTokenClassification:
         self.inference_mode = inference_mode
         LOGGER.info('*** initialize network (INFERENCE MODE: %s) ***' % str(self.inference_mode))
 
-        # checkpoint versioning
-        self.param = ParameterManager(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
-        self.batch_size_validation = batch_size_validation if batch_size_validation else self.param('batch_size')
+        # checkpoint version
+        self.args = Argument(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
+        self.batch_size_validation = batch_size_validation if batch_size_validation else self.args.batch_size
 
         # fix random seed
-        random.seed(self.param('random_seed'))
-        transformers.set_seed(self.param('random_seed'))
-        torch.manual_seed(self.param('random_seed'))
-        torch.cuda.manual_seed_all(self.param('random_seed'))
+        random.seed(self.args.random_seed)
+        transformers.set_seed(self.args.random_seed)
+        torch.manual_seed(self.args.random_seed)
+        torch.cuda.manual_seed_all(self.args.random_seed)
 
         # model/dataset setup
         stats, label_to_id = self.load_ckpt()
@@ -248,47 +241,47 @@ class TransformerTokenClassification:
             self.dataset_split, self.label_to_id = None, label_to_id
             self.writer = None
         else:
-            self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
-            self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
+            self.dataset_split, self.label_to_id = get_dataset(self.args.dataset, label_to_id=label_to_id)
+            self.writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
         self.config = transformers.AutoConfig.from_pretrained(
-            self.param('transformer'),
+            self.args.transformer,
             num_labels=len(self.id_to_label),
             id2label=self.id_to_label,
             label2id=self.label_to_id,
             cache_dir=CACHE_DIR,
         )
         self.model_token_cls = transformers.AutoModelForTokenClassification.from_pretrained(
-            self.param('transformer'), config=self.config
+            self.args.transformer, config=self.config
         )
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
 
         # optimizer
         if self.inference_mode:
             self.optimizer = self.scheduler = None
         else:
-            if self.param("optimizer") == 'adamw':
+            if self.args.optimizer == 'adamw':
                 self.optimizer = transformers.AdamW(
-                    self.model_token_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
-            elif self.param("optimizer") == 'adam':
+                    self.model_token_cls.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+            elif self.args.optimizer == 'adam':
                 self.optimizer = optim.Adam(
-                    self.model_token_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
-            elif self.param("optimizer") == 'sgd':
+                    self.model_token_cls.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+            elif self.args.optimizer == 'sgd':
                 self.optimizer = optim.SGD(
-                    self.model_token_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
+                    self.model_token_cls.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
             else:
-                raise ValueError('bad optimizer: %s' % self.param("optimizer"))
+                raise ValueError('bad optimizer: %s' % self.args.optimizer)
 
             # scheduler
-            if self.param('scheduler') == 'constant':
+            if self.args.scheduler == 'constant':
                 self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lambda _: 1, last_epoch=-1)
-            elif self.param('scheduler') == 'linear':
+            elif self.args.scheduler == 'linear':
                 self.scheduler = transformers.get_linear_schedule_with_warmup(
                     self.optimizer,
-                    num_warmup_steps=self.param('warmup_step'),
-                    num_training_steps=self.param('total_step'))
+                    num_warmup_steps=self.args.warmup_step,
+                    num_training_steps=self.args.total_step)
             else:
-                raise ValueError('unknown scheduler: %s' % self.param('scheduler'))
+                raise ValueError('unknown scheduler: %s' % self.args.scheduler)
 
         # load checkpoint
         self.__step = 0
@@ -312,7 +305,7 @@ class TransformerTokenClassification:
 
         # GPU mixture precision
         self.scale_loss = None
-        if self.param('fp16'):
+        if self.args.fp16:
             try:
                 from apex import amp  # noqa: F401
                 self.model_token_cls, self.optimizer = amp.initialize(
@@ -330,8 +323,8 @@ class TransformerTokenClassification:
         LOGGER.info('running on %i GPUs' % self.n_gpu)
 
     def load_ckpt(self):
-        checkpoint_file = os.path.join(self.param.checkpoint_dir, 'model.pt')
-        label_id_file = os.path.join(self.param.checkpoint_dir, 'label_to_id.json')
+        checkpoint_file = os.path.join(self.args.checkpoint_dir, 'model.pt')
+        label_id_file = os.path.join(self.args.checkpoint_dir, 'label_to_id.json')
         if os.path.exists(checkpoint_file):
             assert os.path.exists(label_id_file)
             LOGGER.info('load ckpt from %s' % checkpoint_file)
@@ -361,7 +354,7 @@ class TransformerTokenClassification:
         return prediction
 
     def train(self):
-        LOGGER.addHandler(logging.FileHandler(os.path.join(self.param.checkpoint_dir, 'logger.log')))
+        LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger.log')))
         if self.inference_mode:
             raise ValueError('model is on an inference mode')
 
@@ -371,7 +364,7 @@ class TransformerTokenClassification:
         data_loader = {k: torch.utils.data.DataLoader(
             Dataset(**self.dataset_split.pop(k), **shared),
             num_workers=NUM_WORKER,
-            batch_size=self.param('batch_size') if k == 'train' else self.batch_size_validation,
+            batch_size=self.args.batch_size if k == 'train' else self.batch_size_validation,
             shuffle=k == 'train',
             drop_last=k == 'train')
             for k in ['train', 'valid']}
@@ -401,7 +394,7 @@ class TransformerTokenClassification:
             LOGGER.info('*** KeyboardInterrupt ***')
 
         if self.__best_val_score is None:
-            self.param.remove_ckpt()
+            self.args.remove_ckpt()
             exit('nothing to be saved')
 
         LOGGER.info('[training completed, %0.2f sec in total]' % (time() - start_time))
@@ -416,11 +409,11 @@ class TransformerTokenClassification:
             'best_val_score': self.__best_val_score,
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict()
-        }, os.path.join(self.param.checkpoint_dir, 'model.pt'))
-        with open(os.path.join(self.param.checkpoint_dir, 'label_to_id.json'), 'w') as f:
+        }, os.path.join(self.args.checkpoint_dir, 'model.pt'))
+        with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
             json.dump(self.label_to_id, f)
         self.writer.close()
-        LOGGER.info('ckpt saved at %s' % self.param.checkpoint_dir)
+        LOGGER.info('ckpt saved at %s' % self.args.checkpoint_dir)
 
     def __epoch_train(self, data_loader):
         """ train on single epoch, returning flag which is True if training has been completed """
@@ -432,7 +425,7 @@ class TransformerTokenClassification:
             loss = self.model_token_cls(**encode)[0]
             if self.n_gpu > 1:
                 loss = loss.mean()
-            if self.param('fp16'):
+            if self.args.fp16:
                 with self.scale_loss(loss, self.optimizer) as scaled_loss:
                     scaled_loss.backward()
             else:
@@ -450,7 +443,7 @@ class TransformerTokenClassification:
                             % (self.__epoch, self.__step, inst_loss, inst_lr))
             self.__step += 1
             # break
-            if self.__step >= self.param('total_step'):
+            if self.__step >= self.args.total_step:
                 LOGGER.info('reached maximum step')
                 return True
 
@@ -490,7 +483,7 @@ class TransformerTokenClassification:
             score = f1_score(seq_true, seq_pred)
             if self.__best_val_score is None or score > self.__best_val_score:
                 self.__best_val_score = score
-            if self.param('early_stop') and self.__best_val_score - score > self.param('early_stop'):
+            if self.args.early_stop and self.__best_val_score - score > self.args.early_stop:
                 return True
         return False
 
