@@ -66,7 +66,7 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None):
                     if tag not in _label_to_id.keys():
                         _label_to_id[tag] = len(_label_to_id)
                     entity.append(_label_to_id[tag])
-        return _label_to_id, {"data": inputs, "labels": labels}
+        return _label_to_id, {"data": inputs, "label": labels}
 
     if data_name == 'conll_2003':
         if not os.path.exists(data_path):
@@ -293,11 +293,14 @@ class TransformerTokenClassification:
                 raise ValueError('unknown scheduler: %s' % self.param('scheduler'))
 
             # mixture precision
+            self.fp16 = False
             if self.param('fp16'):
                 try:
                     from apex import amp  # noqa: F401
                     self.model_token_cls, self.optimizer = amp.initialize(
                         self.model_token_cls, self.optimizer, opt_level='O1')
+                    self.fp16 = True
+                    LOGGER.info('using `amp`')
                 except ImportError:
                     raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
 
@@ -323,6 +326,7 @@ class TransformerTokenClassification:
         self.data_parallel = False
         if self.n_gpu > 1:
             self.data_parallel = True
+            # multi-gpu training (should be after apex fp16 initialization)
             self.model_token_cls = torch.nn.DataParallel(self.model_token_cls.cuda())
             LOGGER.info('using `torch.nn.DataParallel`')
         LOGGER.info('running on %i GPUs' % self.n_gpu)
@@ -367,14 +371,14 @@ class TransformerTokenClassification:
         start_time = time()
         shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id}
         data_loader = {k: torch.utils.data.DataLoader(
-            Dataset(**self.dataset_split.pop(k).update(shared)),
+            Dataset(**self.dataset_split.pop(k), **shared),
             num_workers=NUM_WORKER,
             batch_size=self.param('batch_size') if k == 'train' else self.batch_size_validation,
             shuffle=k == 'train',
             drop_last=k == 'train')
             for k in ['train', 'valid']}
         data_loader_test = {k: torch.utils.data.DataLoader(
-            Dataset(**self.dataset_split.pop(k).update(shared)),
+            Dataset(**self.dataset_split.pop(k), **shared),
             num_workers=NUM_WORKER,
             batch_size=self.batch_size_validation)
             for k in self.dataset_split.keys()}
