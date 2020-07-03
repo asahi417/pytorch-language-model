@@ -396,6 +396,7 @@ class TransformerSequenceClassification:
         self.model.train()
         for i, encode in enumerate(data_loader, 1):
             # update model
+            print(encode.keys())
             encode = {k: v.to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
             loss, logit = self.model(**encode)[0:2]

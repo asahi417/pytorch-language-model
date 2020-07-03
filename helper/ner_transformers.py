@@ -122,7 +122,6 @@ class Dataset(torch.utils.data.Dataset):
             if encode['input_ids'][0] in self.tokenizer.all_special_ids:
                 fixed_label = [self.pad_token_label_id] + fixed_label
             fixed_label += [self.pad_token_label_id] * (len(encode['input_ids']) - len(fixed_label))
-            encode['labels'] = fixed_label
             encode_tensor['labels'] = torch.tensor(fixed_label, dtype=torch.long)
         return encode_tensor
 
