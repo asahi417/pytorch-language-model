@@ -378,11 +378,10 @@ class TransformerTokenClassification:
             drop_last=k == 'train')
             for k in ['train', 'valid']}
         data_loader_test = {k: torch.utils.data.DataLoader(
-            Dataset(**self.dataset_split.pop(k), **shared),
+            Dataset(**v, **shared),
             num_workers=NUM_WORKER,
             batch_size=self.batch_size_validation)
-            for k in self.dataset_split.keys()}
-        print(str(list(self.dataset_split.keys())))
+            for k, v in self.dataset_split.items()}
         LOGGER.info('data_loader     : %s' % str(list(data_loader.keys())))
         LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
         try:
