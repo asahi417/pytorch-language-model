@@ -380,12 +380,24 @@ class TransformerSequenceClassifier:
                 json.dump(label_dict, f)
         self.id_to_label = dict([(str(v), str(k)) for k, v in label_dict.items()])
 
-        self.model_seq_cls = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')].from_pretrained(
+        # self.model_seq_cls = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')].from_pretrained(
+        #     self.param('transformer'),
+        #     cache_dir=CACHE_DIR,
+        #     num_labels=len(list(label_dict.keys()))
+        # )
+        # self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
+        #
+        self.config = transformers.AutoConfig.from_pretrained(
             self.param('transformer'),
+            num_labels=len(self.id_to_label),
+            id2label=self.id_to_label,
+            label2id=label_dict,
             cache_dir=CACHE_DIR,
-            num_labels=len(list(label_dict.keys()))
         )
-        self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
+        self.model_seq_cls = transformers.AutoModelForSequenceClassification.from_pretrained(
+            self.param('transformer'), config=self.config
+        )
+        self.token_encoder = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()

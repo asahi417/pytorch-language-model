@@ -220,23 +220,23 @@ class TransformerSequenceClassification:
             self.dataset_split, self.label_to_id = get_dataset(self.args.dataset, label_to_id=label_to_id)
             self.writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
-        # self.config = transformers.AutoConfig.from_pretrained(
-        #     self.args.transformer,
-        #     num_labels=len(self.id_to_label),
-        #     id2label=self.id_to_label,
-        #     label2id=self.label_to_id,
-        #     cache_dir=CACHE_DIR,
-        # )
-        # self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
-        #     self.args.transformer, config=self.config
-        # )
-        # self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
-        self.model = transformers.XLMRobertaForSequenceClassification.from_pretrained(
+        self.config = transformers.AutoConfig.from_pretrained(
             self.args.transformer,
+            num_labels=len(self.id_to_label),
+            id2label=self.id_to_label,
+            label2id=self.label_to_id,
             cache_dir=CACHE_DIR,
-            num_labels=len(list(self.id_to_label.keys()))
         )
-        self.tokenizer = transformers.XLMRobertaTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
+        self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
+            self.args.transformer, config=self.config
+        )
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
+        # self.model = transformers.XLMRobertaForSequenceClassification.from_pretrained(
+        #     self.args.transformer,
+        #     cache_dir=CACHE_DIR,
+        #     num_labels=len(list(self.id_to_label.keys()))
+        # )
+        # self.tokenizer = transformers.XLMRobertaTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
 
         # optimizer
         if self.inference_mode:
