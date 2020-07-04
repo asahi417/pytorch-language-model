@@ -78,22 +78,16 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
 class Dataset(torch.utils.data.Dataset):
     """ torch.utils.data.Dataset with transformer tokenizer """
 
-    def __init__(self, data: list, transformer_tokenizer,
-                 max_seq_length: int = None, label: list = None, pad_to_max_length: bool = True):
+    def __init__(self, data: list, transform_function, label: list = None):
         self.data = data  # list of half-space split tokens
-        self.label = label  # list of label sequence
-        self.pad_to_max_length = pad_to_max_length
-        self.tokenizer = transformer_tokenizer
-        if max_seq_length and max_seq_length > self.tokenizer.max_len:
-            raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
-        self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
+        self.label = label if label is None else [int(l) for l in label]  # list of label sequence
+        self.transform_function = transform_function
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        encode = self.tokenizer.encode_plus(
-            ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
+        encode = self.transform_function(self.data[idx])
         if self.label is not None:
             encode['labels'] = self.label[idx]
         float_list = ['attention_mask']
@@ -188,6 +182,19 @@ class Argument:
                 return target_checkpoints_path, parameter
 
 
+class Transforms:
+    """ Text encoder with transformers tokenizer """
+
+    def __init__(self, transformer_tokenizer: str, max_seq_length: int = None):
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(transformer_tokenizer, cache_dir=CACHE_DIR)
+        if max_seq_length and max_seq_length > self.tokenizer.max_len:
+            raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
+        self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
+
+    def __call__(self, text):
+        return self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
+
+
 class TransformerSequenceClassification:
     """ finetune transformers on text classification """
 
@@ -217,17 +224,16 @@ class TransformerSequenceClassification:
             self.dataset_split, self.label_to_id = get_dataset(self.args.dataset, label_to_id=label_to_id)
             self.writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
-        self.config = transformers.AutoConfig.from_pretrained(
-            self.args.transformer,
-            num_labels=len(self.id_to_label),
-            id2label=self.id_to_label,
-            label2id=self.label_to_id,
-            cache_dir=CACHE_DIR,
-        )
         self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
-            self.args.transformer, config=self.config
+            self.args.transformer,
+            config=transformers.AutoConfig.from_pretrained(
+                self.args.transformer,
+                num_labels=len(self.id_to_label),
+                id2label=self.id_to_label,
+                label2id=self.label_to_id,
+                cache_dir=CACHE_DIR)
         )
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
+        self.transforms = Transforms(self.args.transformer, self.args.max_seq_length)
 
         # optimizer
         if self.inference_mode:
@@ -335,16 +341,15 @@ class TransformerSequenceClassification:
 
         LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
         start_time = time()
-        shared = {"transformer_tokenizer": self.tokenizer}
         data_loader = {k: torch.utils.data.DataLoader(
-            Dataset(**self.dataset_split.pop(k), **shared),
+            Dataset(**self.dataset_split.pop(k), transform_function=self.transforms),
             num_workers=NUM_WORKER,
             batch_size=self.args.batch_size if k == 'train' else self.batch_size_validation,
             shuffle=k == 'train',
             drop_last=k == 'train')
             for k in ['train', 'valid']}
         data_loader_test = {k: torch.utils.data.DataLoader(
-            Dataset(**v, **shared),
+            Dataset(**v, transform_function=self.transforms),
             num_workers=NUM_WORKER,
             batch_size=self.batch_size_validation)
             for k, v in self.dataset_split.items()}

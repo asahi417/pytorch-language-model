@@ -318,6 +318,7 @@ class TransformerSequenceClassifier:
         self.id_to_label = dict([(str(v), str(k)) for k, v in label_dict.items()])
 
         # self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
         self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
         self.config = transformers.AutoConfig.from_pretrained(
             self.param('transformer'),
