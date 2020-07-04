@@ -494,7 +494,6 @@ class TransformerTokenClassification:
             LOGGER.info('[epoch %i] (%s) \n %s' % (self.__epoch, prefix, classification_report(seq_true, seq_pred)))
         except ZeroDivisionError:
             LOGGER.info('[epoch %i] (%s) * classification_report raises `ZeroDivisionError`' % (self.__epoch, prefix))
-        print(f1_score(seq_true, seq_pred), accuracy_score(seq_true, seq_pred))
         writer.add_scalar('%s/f1' % prefix, f1_score(seq_true, seq_pred), self.__epoch)
         writer.add_scalar('%s/recall' % prefix, recall_score(seq_true, seq_pred), self.__epoch)
         writer.add_scalar('%s/precision' % prefix, precision_score(seq_true, seq_pred), self.__epoch)

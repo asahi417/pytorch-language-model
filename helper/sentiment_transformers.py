@@ -215,7 +215,7 @@ class TransformerSequenceClassification:
             self.dataset_split, self.label_to_id = get_dataset(self.args.dataset)
             with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
                 json.dump(self.label_to_id, f)
-        self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
+        self.id_to_label = {v: k for k, v in self.label_to_id.items()}
 
         self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
             self.args.transformer,
@@ -319,8 +319,8 @@ class TransformerSequenceClassification:
             _, _pred = torch.max(logit, dim=1)
             _pred_list = _pred.cpu().tolist()
             _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
-            prediction += [self.id_to_label[str(_p)] for _p in _pred_list]
-            prob += [dict([(self.id_to_label[str(i)], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
+            prediction += [self.id_to_label[_p] for _p in _pred_list]
+            prob += [dict([(self.id_to_label[i], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
         return prediction, prob
 
     def test(self):
@@ -333,7 +333,7 @@ class TransformerSequenceClassification:
             batch_size=self.args.batch_size)
             for k, v in self.dataset_split.items() if k not in ['train', 'valid']}
         LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
-        assert len(data_loader_test.keys()) == 0, 'no test set found'
+        assert len(data_loader_test.keys()) != 0, 'no test set found'
         start_time = time()
         writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         for k, v in data_loader_test.items():
