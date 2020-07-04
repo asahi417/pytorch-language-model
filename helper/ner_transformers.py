@@ -199,19 +199,20 @@ class Dataset(torch.utils.data.Dataset):
 
     def __init__(self, data: list, transform_function, label: list = None):
         self.data = data  # list of half-space split tokens
-        self.label = self.fix_label(label, data)  # list of label sequence
         self.transform_function = transform_function
+        self.label = self.fix_label(label, data, transform_function.tokenize, transform_function.all_special_ids)
 
-    def fix_label(self, label, data):
+    @staticmethod
+    def fix_label(self, label, data, tokenizer, all_special_ids):
         assert len(label) == len(data)
         fixed_labels = []
         for x, y in zip(label, data):
             assert len(y) == len(x)
             encode = self.transform_function(' '.join(x))
             fixed_label = list(chain(*[
-                [label] + [PAD_TOKEN_LABEL_ID] * (len(self.transform_function.tokenize(word)) - 1)
+                [label] + [PAD_TOKEN_LABEL_ID] * (len(tokenizer(word)) - 1)
                 for label, word in zip(y, x)]))
-            if encode['input_ids'][0] in self.transform_function.all_special_ids:
+            if encode['input_ids'][0] in all_special_ids:
                 fixed_label = [PAD_TOKEN_LABEL_ID] + fixed_label
             fixed_label += [PAD_TOKEN_LABEL_ID] * (len(encode['input_ids']) - len(fixed_label))
             fixed_labels.append(fixed_label)
@@ -510,8 +511,8 @@ def get_options():
                         type=int)
     parser.add_argument('-b', '--batch-size', help='batch size', default=16, type=int)
     parser.add_argument('--random-seed', help='random seed', default=1234, type=int)
-    parser.add_argument('--lr', help='learning rate', default=2e-5, type=float)
-    parser.add_argument('--optimizer', help='optimizer', default='adam', type=str)
+    parser.add_argument('--lr', help='learning rate', default=1e-5, type=float)
+    parser.add_argument('--optimizer', help='optimizer', default='adamw', type=str)
     parser.add_argument('--scheduler', help='scheduler', default='linear', type=str)
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
     parser.add_argument('--batch-size-validation',
@@ -519,7 +520,7 @@ def get_options():
                         default=2,
                         type=int)
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
-    parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
+    parser.add_argument('--weight-decay', help='weight decay', default=1e-7, type=float)
     parser.add_argument('--early-stop', help='value of accuracy drop for early stop', default=0.1, type=float)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
     parser.add_argument('--fp16', help='fp16', action='store_true')
