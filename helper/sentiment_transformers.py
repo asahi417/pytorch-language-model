@@ -29,7 +29,7 @@ CACHE_DIR = os.getenv("CACHE_DIR", './cache')
 CKPT_DIR = os.getenv("CKPT_DIR", './ckpt')
 
 
-def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
+def get_dataset(data_name: str = 'sst', label_to_id: dict = None, allow_update: bool=True):
     """ download dataset file and return dictionary including training/validation split """
     label_to_id = dict() if label_to_id is None else label_to_id
 
@@ -44,6 +44,7 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
 
         for unique_label in list(set(list_label)):
             if unique_label not in _label_to_id.keys():
+                assert allow_update
                 _label_to_id[unique_label] = len(_label_to_id)
         list_label = [int(_label_to_id[l]) for l in list_label]
         assert len(list_label) == len(list_text)
@@ -62,8 +63,10 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
         label_to_id, data = decode_data(it, _label_to_id=label_to_id)
         data_split[name] = data
         LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data['data'])))
-    return data_split, label_to_id
-
+    if allow_update:
+        return data_split, label_to_id
+    else:
+        return data_split
 
 class Argument:
     """ Model training arguments manager """
@@ -188,10 +191,8 @@ class Dataset(torch.utils.data.Dataset):
 class TransformerSequenceClassification:
     """ finetune transformers on text classification """
 
-    def __init__(self, dataset: str, batch_size_validation: int = None,
-                 checkpoint: str = None, inference_mode: bool = False, tensorboard: bool = True, **kwargs):
-        self.inference_mode = inference_mode
-        LOGGER.info('*** initialize network (INFERENCE MODE: %s) ***' % str(self.inference_mode))
+    def __init__(self, dataset: str, batch_size_validation: int = None, checkpoint: str = None, **kwargs):
+        LOGGER.info('*** initialize network ***')
 
         # checkpoint version
         self.args = Argument(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
@@ -203,15 +204,16 @@ class TransformerSequenceClassification:
         torch.manual_seed(self.args.random_seed)
         torch.cuda.manual_seed_all(self.args.random_seed)
 
-        # model/dataset setup
-        stats, label_to_id = self.load_ckpt()
-        if self.inference_mode:
-            if stats is None or label_to_id is None:
-                raise ValueError('As no checkpoints found, unable to perform inference.')
-            self.dataset_split, self.label_to_id = None, label_to_id
+        # model setup
+        ckpt_statistics = self.load_ckpt()
+        if ckpt_statistics:
+            stats, self.label_to_id = ckpt_statistics
+            self.dataset_split = None
         else:
-            self.dataset_split, self.label_to_id = get_dataset(self.args.dataset, label_to_id=label_to_id)
-        self.writer = SummaryWriter(log_dir=self.args.checkpoint_dir) if tensorboard else None
+            self.dataset_split, self.label_to_id = get_dataset(self.args.dataset)
+            with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
+                json.dump(self.label_to_id, f)
+
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
         self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
             self.args.transformer,
@@ -225,31 +227,28 @@ class TransformerSequenceClassification:
         self.transforms = Transforms(self.args.transformer, self.args.max_seq_length)
 
         # optimizer
-        if self.inference_mode:
-            self.optimizer = self.scheduler = None
+        if self.args.optimizer == 'adamw':
+            self.optimizer = transformers.AdamW(
+                self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+        elif self.args.optimizer == 'adam':
+            self.optimizer = optim.Adam(
+                self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+        elif self.args.optimizer == 'sgd':
+            self.optimizer = optim.SGD(
+                self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
         else:
-            if self.args.optimizer == 'adamw':
-                self.optimizer = transformers.AdamW(
-                    self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
-            elif self.args.optimizer == 'adam':
-                self.optimizer = optim.Adam(
-                    self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
-            elif self.args.optimizer == 'sgd':
-                self.optimizer = optim.SGD(
-                    self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
-            else:
-                raise ValueError('bad optimizer: %s' % self.args.optimizer)
+            raise ValueError('bad optimizer: %s' % self.args.optimizer)
 
-            # scheduler
-            if self.args.scheduler == 'constant':
-                self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lambda _: 1, last_epoch=-1)
-            elif self.args.scheduler == 'linear':
-                self.scheduler = transformers.get_linear_schedule_with_warmup(
-                    self.optimizer,
-                    num_warmup_steps=self.args.warmup_step,
-                    num_training_steps=self.args.total_step)
-            else:
-                raise ValueError('unknown scheduler: %s' % self.args.scheduler)
+        # scheduler
+        if self.args.scheduler == 'constant':
+            self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lambda _: 1, last_epoch=-1)
+        elif self.args.scheduler == 'linear':
+            self.scheduler = transformers.get_linear_schedule_with_warmup(
+                self.optimizer,
+                num_warmup_steps=self.args.warmup_step,
+                num_training_steps=self.args.total_step)
+        else:
+            raise ValueError('unknown scheduler: %s' % self.args.scheduler)
 
         # load checkpoint
         self.__step = 0 if stats is None else stats['step']  # num of training step
@@ -305,10 +304,11 @@ class TransformerSequenceClassification:
             label_to_id = json.load(open(label_id_file, 'r'))
             return ckpt_dict, label_to_id
         else:
-            return None, None
+            return None
 
     # def predict(self, x: list):
     #     """ model inference """
+    #     if self.label_to_id:
     #     self.model.eval()
     #     encode = self.transforms(x)
     #     logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
@@ -321,27 +321,26 @@ class TransformerSequenceClassification:
 
     def test(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_test.log')))
-        if self.inference_mode:
-            raise ValueError('model is on an inference mode')
-
-        LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
-        start_time = time()
+        writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
+        if self.dataset_split is None:
+            self.dataset_split = get_dataset(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
         data_loader_test = {k: torch.utils.data.DataLoader(
             Dataset(**v, transform_function=self.transforms),
             num_workers=NUM_WORKER,
             batch_size=self.args.batch_size)
             for k, v in self.dataset_split.items() if k not in ['train', 'valid']}
         LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
+        start_time = time()
         for k, v in data_loader_test.items():
-            self.__epoch_valid(v, prefix=k)
+            self.__epoch_valid(v, writer=writer, prefix=k)
+        writer.close()
         LOGGER.info('[test completed, %0.2f sec in total]' % (time() - start_time))
 
     def train(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_train.log')))
-        if self.inference_mode:
-            raise ValueError('model is on an inference mode')
-
-        LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
+        if self.dataset_split is None:
+            self.dataset_split = get_dataset(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
+        writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         start_time = time()
         data_loader = {k: torch.utils.data.DataLoader(
             Dataset(**self.dataset_split.pop(k), transform_function=self.transforms),
@@ -351,11 +350,12 @@ class TransformerSequenceClassification:
             drop_last=k == 'train')
             for k in ['train', 'valid']}
         LOGGER.info('data_loader     : %s' % str(list(data_loader.keys())))
+        LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
         try:
             with detect_anomaly():
                 while True:
-                    if_training_finish = self.__epoch_train(data_loader['train'])
-                    if_early_stop = self.__epoch_valid(data_loader['valid'], prefix='valid')
+                    if_training_finish = self.__epoch_train(data_loader['train'], writer=writer)
+                    if_early_stop = self.__epoch_valid(data_loader['valid'], writer=writer, prefix='valid')
                     if if_training_finish or if_early_stop:
                         break
                     self.__epoch += 1
@@ -383,17 +383,14 @@ class TransformerSequenceClassification:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict()
         }, os.path.join(self.args.checkpoint_dir, 'model.pt'))
-        with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
-            json.dump(self.label_to_id, f)
-        if self.writer:
-            self.writer.close()
+        writer.close()
         LOGGER.info('ckpt saved at %s' % self.args.checkpoint_dir)
 
     def release_cache(self):
         if self.device == "cuda":
             torch.cuda.empty_cache()
 
-    def __epoch_train(self, data_loader):
+    def __epoch_train(self, data_loader, writer):
         """ train on single epoch return flag which is True if training has been completed """
         self.model.train()
         for i, encode in enumerate(data_loader, 1):
@@ -416,10 +413,9 @@ class TransformerSequenceClassification:
             inst_accuracy = ((pred == encode['labels']).cpu().float().mean()).item()
             inst_loss = loss.cpu().detach().item()
             inst_lr = self.optimizer.param_groups[0]['lr']
-            if self.writer:
-                self.writer.add_scalar('train/loss', inst_loss, self.__step)
-                self.writer.add_scalar('train/learning_rate', inst_lr, self.__step)
-                self.writer.add_scalar('train/accuracy', inst_accuracy, self.__step)
+            writer.add_scalar('train/loss', inst_loss, self.__step)
+            writer.add_scalar('train/learning_rate', inst_lr, self.__step)
+            writer.add_scalar('train/accuracy', inst_accuracy, self.__step)
             if self.__step % PROGRESS_INTERVAL == 0:
                 LOGGER.info('[epoch %i] * (training step %i) loss: %.3f, lr: %0.8f'
                             % (self.__epoch, self.__step, inst_loss, inst_lr))
@@ -431,7 +427,7 @@ class TransformerSequenceClassification:
         self.release_cache()
         return False
 
-    def __epoch_valid(self, data_loader, prefix: str='valid'):
+    def __epoch_valid(self, data_loader, writer, prefix: str='valid'):
         """ validation/test """
         self.model.eval()
         list_accuracy, list_loss = [], []
@@ -446,9 +442,8 @@ class TransformerSequenceClassification:
 
         accuracy, loss = float(sum(list_accuracy)/len(list_accuracy)), float(sum(list_loss)/len(list_loss))
         LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
-        if self.writer:
-            self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
-            self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
+        writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
+        writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
         if prefix == 'valid':
             if self.__best_val_score is None or accuracy > self.__best_val_score:
                 self.__best_val_score = accuracy
@@ -504,11 +499,10 @@ if __name__ == '__main__':
         weight_decay=opt.weight_decay,
         batch_size=opt.batch_size,
         max_seq_length=opt.max_seq_length,
-        inference_mode=opt.inference_mode,
         early_stop=opt.early_stop,
         fp16=opt.fp16
     )
-    if classifier.inference_mode:
+    if opt.inference_mode:
         while True:
             _inp = input('input sentence >>>')
             if _inp == 'q':
@@ -519,7 +513,9 @@ if __name__ == '__main__':
                 predictions, probs = classifier.predict([_inp])
                 print(predictions)
                 print(probs)
-
     else:
-        classifier.train()
+        if opt.test:
+            classifier.test()
+        else:
+            classifier.train()
 
