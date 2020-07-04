@@ -548,8 +548,8 @@ if __name__ == '__main__':
     )
     if classifier.inference_mode:
 
-        # predictions = classifier.predict(['I live in London', '東京は今日も暑いです'])
-        # print(predictions)
+        predictions = classifier.predict(['I live in London', '東京は今日も暑いです'])
+        print(predictions)
 
         # while True:
         #     _inp = input('input sentence >>>')
