@@ -78,13 +78,12 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
 class Dataset(torch.utils.data.Dataset):
     """ torch.utils.data.Dataset with transformer tokenizer """
 
-    def __init__(self, data: list, transformer_tokenizer, pad_token_label_id,
+    def __init__(self, data: list, transformer_tokenizer,
                  max_seq_length: int = None, label: list = None, pad_to_max_length: bool = True):
         self.data = data  # list of half-space split tokens
         self.label = label  # list of label sequence
         self.pad_to_max_length = pad_to_max_length
         self.tokenizer = transformer_tokenizer
-        self.pad_token_label_id = pad_token_label_id
         if max_seq_length and max_seq_length > self.tokenizer.max_len:
             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
@@ -191,8 +190,6 @@ class Argument:
 
 class TransformerSequenceClassification:
     """ finetune transformers on text classification """
-
-    pad_token_label_id = nn.CrossEntropyLoss().ignore_index
 
     def __init__(self, dataset: str, batch_size_validation: int = None,
                  checkpoint: str = None, inference_mode: bool = False, **kwargs):
@@ -344,7 +341,7 @@ class TransformerSequenceClassification:
 
         LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
         start_time = time()
-        shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id}
+        shared = {"transformer_tokenizer": self.tokenizer}
         data_loader = {k: torch.utils.data.DataLoader(
             Dataset(**self.dataset_split.pop(k), **shared),
             num_workers=NUM_WORKER,

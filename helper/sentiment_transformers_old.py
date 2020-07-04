@@ -106,150 +106,81 @@ def get_dataset(data_name: str = 'sst',
     return data_split, label_dictionary
 
 
-def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
-    """ Create a schedule with a learning rate that decreases linearly after
-    linearly increasing during a warmup period.
-    """
-
-    def lr_lambda(current_step):
-        if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
-        return max(
-            0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps))
-        )
-
-    return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
-
-
-class AdamW(torch.optim.Optimizer):
-    """ Implements Adam algorithm with weight decay fix.
-    Parameters:
-        lr (float): learning rate. Default 1e-3.
-        betas (tuple of 2 floats): Adams beta parameters (b1, b2). Default: (0.9, 0.999)
-        eps (float): Adams epsilon. Default: 1e-6
-        weight_decay (float): Weight decay. Default: 0.0
-        correct_bias (bool): can be set to False to avoid correcting bias in Adam (e.g. like in Bert TF repository). Default True.
-    """
-
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-6, weight_decay=0.0, correct_bias=True):
-        if lr < 0.0:
-            raise ValueError("Invalid learning rate: {} - should be >= 0.0".format(lr))
-        if not 0.0 <= betas[0] < 1.0:
-            raise ValueError("Invalid beta parameter: {} - should be in [0.0, 1.0[".format(betas[0]))
-        if not 0.0 <= betas[1] < 1.0:
-            raise ValueError("Invalid beta parameter: {} - should be in [0.0, 1.0[".format(betas[1]))
-        if not 0.0 <= eps:
-            raise ValueError("Invalid epsilon value: {} - should be >= 0.0".format(eps))
-        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, correct_bias=correct_bias)
-        super().__init__(params, defaults)
-
-    def step(self, closure=None):
-        """Performs a single optimization step.
-        Arguments:
-            closure (callable, optional): A closure that reevaluates the model
-                and returns the loss.
-        """
-        loss = None
-        if closure is not None:
-            loss = closure()
-
-        for group in self.param_groups:
-            for p in group["params"]:
-                if p.grad is None:
-                    continue
-                grad = p.grad.data
-                if grad.is_sparse:
-                    raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
-
-                state = self.state[p]
-
-                # State initialization
-                if len(state) == 0:
-                    state["step"] = 0
-                    # Exponential moving average of gradient values
-                    state["exp_avg"] = torch.zeros_like(p.data)
-                    # Exponential moving average of squared gradient values
-                    state["exp_avg_sq"] = torch.zeros_like(p.data)
-
-                exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
-                beta1, beta2 = group["betas"]
-
-                state["step"] += 1
-
-                # Decay the first and second moment running average coefficient
-                # In-place operations to update the averages at the same time
-                exp_avg.mul_(beta1).add_(1.0 - beta1, grad)
-                exp_avg_sq.mul_(beta2).addcmul_(1.0 - beta2, grad, grad)
-                denom = exp_avg_sq.sqrt().add_(group["eps"])
-
-                step_size = group["lr"]
-                if group["correct_bias"]:  # No bias correction for Bert
-                    bias_correction1 = 1.0 - beta1 ** state["step"]
-                    bias_correction2 = 1.0 - beta2 ** state["step"]
-                    step_size = step_size * math.sqrt(bias_correction2) / bias_correction1
-
-                p.data.addcdiv_(-step_size, exp_avg, denom)
-
-                # Just adding the square of the weights to the loss function is *not*
-                # the correct way of using L2 regularization/weight decay with Adam,
-                # since that will interact with the m and v parameters in strange ways.
-                #
-                # Instead we want to decay the weights in a manner that doesn't interact
-                # with the m/v parameters. This is equivalent to adding the square
-                # of the weights to the loss with plain (non-momentum) SGD.
-                # Add weight decay at the end (fixed version)
-                if group["weight_decay"] > 0.0:
-                    p.data.add_(-group["lr"] * group["weight_decay"], p.data)
-
-        return loss
+# class TokenEncoder:
+#     """ Token encoder with transformers tokenizer """
+#
+#     def __init__(self,
+#                  transformer: str,
+#                  max_seq_length: int = None):
+#         self.tokenizer = transformers.AutoTokenizer.from_pretrained(transformer, cache_dir=CACHE_DIR)
+#         if max_seq_length and max_seq_length > self.tokenizer.max_len:
+#             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
+#         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
+#         LOGGER.info('max_sequence_length: %i' % self.max_seq_length)
+#
+#     def __call__(self, text):
+#         # token_ids = self.tokenizer.encode(text)
+#         tokens_dict = self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
+#         token_ids = tokens_dict['input_ids']
+#         attention_mask = tokens_dict['attention_mask']
+#         return token_ids, attention_mask
 
 
-class TokenEncoder:
-    """ Token encoder with transformers tokenizer """
-
-    def __init__(self,
-                 transformer: str,
-                 max_seq_length: int = None):
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(transformer, cache_dir=CACHE_DIR)
-        if max_seq_length and max_seq_length > self.tokenizer.max_len:
-            raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
-        self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
-        LOGGER.info('max_sequence_length: %i' % self.max_seq_length)
-
-    def __call__(self, text):
-        # token_ids = self.tokenizer.encode(text)
-        tokens_dict = self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
-        token_ids = tokens_dict['input_ids']
-        attention_mask = tokens_dict['attention_mask']
-        return token_ids, attention_mask
+# class Dataset(torch.utils.data.Dataset):
+#     """ torch.utils.data.Dataset instance """
+#
+#     def __init__(self,
+#                  data: list,
+#                  token_encoder,
+#                  label: list=None):
+#         self.data = data
+#         if label is None:
+#             self.label = None
+#         else:
+#             self.label = [int(l) for l in label]
+#         self.token_encoder = token_encoder
+#
+#     def __len__(self):
+#         return len(self.data)
+#
+#     def __getitem__(self, idx):
+#         token_ids, attention_mask = self.token_encoder(self.data[idx])
+#         out_data = torch.tensor(token_ids, dtype=torch.long)
+#         attention_mask = torch.tensor(attention_mask, dtype=torch.float32)
+#         if self.label is None:
+#             return out_data, attention_mask
+#         else:
+#             out_label = torch.tensor(self.label[idx], dtype=torch.long)
+#             return out_data, attention_mask, out_label
 
 
 class Dataset(torch.utils.data.Dataset):
-    """ torch.utils.data.Dataset instance """
+    """ torch.utils.data.Dataset with transformer tokenizer """
 
-    def __init__(self,
-                 data: list,
-                 token_encoder,
-                 label: list=None):
-        self.data = data
+    def __init__(self, data: list, transformer_tokenizer,
+                 max_seq_length: int = None, label: list = None, pad_to_max_length: bool = True):
+        self.data = data  # list of half-space split tokens
         if label is None:
             self.label = None
         else:
             self.label = [int(l) for l in label]
-        self.token_encoder = token_encoder
+        self.pad_to_max_length = pad_to_max_length
+        self.tokenizer = transformer_tokenizer
+        if max_seq_length and max_seq_length > self.tokenizer.max_len:
+            raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
+        self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        token_ids, attention_mask = self.token_encoder(self.data[idx])
-        out_data = torch.tensor(token_ids, dtype=torch.long)
-        attention_mask = torch.tensor(attention_mask, dtype=torch.float32)
-        if self.label is None:
-            return out_data, attention_mask
-        else:
-            out_label = torch.tensor(self.label[idx], dtype=torch.long)
-            return out_data, attention_mask, out_label
+        encode = self.tokenizer.encode_plus(self.data[idx], max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
+        if self.label is not None:
+            encode['labels'] = self.label[idx]
+        float_list = ['attention_mask']
+        encode = {k: torch.tensor(v, dtype=torch.float32) if k in float_list else torch.tensor(v, dtype=torch.long)
+                  for k, v in encode.items()}
+        return encode
 
 
 class ParameterManager:
@@ -380,13 +311,8 @@ class TransformerSequenceClassifier:
                 json.dump(label_dict, f)
         self.id_to_label = dict([(str(v), str(k)) for k, v in label_dict.items()])
 
-        # self.model_seq_cls = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')].from_pretrained(
-        #     self.param('transformer'),
-        #     cache_dir=CACHE_DIR,
-        #     num_labels=len(list(label_dict.keys()))
-        # )
-        self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
-        #
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
+        # self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
         self.config = transformers.AutoConfig.from_pretrained(
             self.param('transformer'),
             num_labels=len(self.id_to_label),
@@ -397,7 +323,6 @@ class TransformerSequenceClassifier:
         self.model_seq_cls = transformers.AutoModelForSequenceClassification.from_pretrained(
             self.param('transformer'), config=self.config
         )
-        # self.token_encoder = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
@@ -417,7 +342,7 @@ class TransformerSequenceClassifier:
             self.optimizer = self.scheduler = None
         else:
             if self.param("optimizer") == 'adamw':
-                self.optimizer = AdamW(
+                self.optimizer = transformers.AdamW(
                     self.model_seq_cls.parameters(), lr=self.param('lr'), weight_decay=self.param('weight_decay'))
             elif self.param("optimizer") == 'adam':
                 self.optimizer = optim.Adam(
@@ -432,7 +357,7 @@ class TransformerSequenceClassifier:
             if self.param('scheduler') == 'constant':
                 self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lambda _: 1, last_epoch=-1)
             elif self.param('scheduler') == 'linear':
-                self.scheduler = get_linear_schedule_with_warmup(
+                self.scheduler = transformers.get_linear_schedule_with_warmup(
                     self.optimizer,
                     num_warmup_steps=self.param('warmup_step'),
                     num_training_steps=self.param('total_step'))
@@ -508,18 +433,18 @@ class TransformerSequenceClassifier:
         LOGGER.info('setup dataset')
         dataset_split, _ = get_dataset(self.param('dataset'))
         data_loader_train = torch.utils.data.DataLoader(
-            Dataset(dataset_split[0][0], label=dataset_split[0][1], token_encoder=self.token_encoder),
+            Dataset(dataset_split[0][0], label=dataset_split[0][1], transformer_tokenizer=self.tokenizer),
             batch_size=self.param('batch_size'),
             shuffle=True,
             num_workers=NUM_WORKER,
             drop_last=True)
         data_loader_valid = torch.utils.data.DataLoader(
-            Dataset(dataset_split[1][0], label=dataset_split[1][1], token_encoder=self.token_encoder),
+            Dataset(dataset_split[1][0], label=dataset_split[1][1], transformer_tokenizer=self.tokenizer),
             batch_size=self.batch_size_validation,
             num_workers=NUM_WORKER)
         if len(dataset_split) > 2:
             data_loader_test = torch.utils.data.DataLoader(
-                Dataset(dataset_split[2][0], label=dataset_split[2][1], token_encoder=self.token_encoder),
+                Dataset(dataset_split[2][0], label=dataset_split[2][1], transformer_tokenizer=self.tokenizer),
                 batch_size=self.param('batch_size'))
         else:
             data_loader_test = None
