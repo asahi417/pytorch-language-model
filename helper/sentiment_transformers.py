@@ -311,20 +311,20 @@ class TransformerSequenceClassification:
     def predict(self, x: list):
         """ model inference """
         self.model.eval()
-        data_loader =torch.utils.data.DataLoader(
+        data_loader = torch.utils.data.DataLoader(
             Dataset(x, transform_function=self.transforms), num_workers=NUM_WORKER, batch_size=len(x))
-        encode = self.transforms([x])
-        logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
-        _, _pred = torch.max(logit, dim=1)
-        _pred_list = _pred.cpu().tolist()
-        _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
-        prediction = [self.id_to_label[str(_p)] for _p in _pred_list]
-        prob = [dict([(self.id_to_label[str(i)], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
+        prediction, prob = [], []
+        for encode in data_loader:
+            logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
+            _, _pred = torch.max(logit, dim=1)
+            _pred_list = _pred.cpu().tolist()
+            _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
+            prediction += [self.id_to_label[str(_p)] for _p in _pred_list]
+            prob += [dict([(self.id_to_label[str(i)], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
         return prediction, prob
 
     def test(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_test.log')))
-        writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         if self.dataset_split is None:
             self.dataset_split = get_dataset(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
         data_loader_test = {k: torch.utils.data.DataLoader(
@@ -333,7 +333,9 @@ class TransformerSequenceClassification:
             batch_size=self.args.batch_size)
             for k, v in self.dataset_split.items() if k not in ['train', 'valid']}
         LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
+        assert len(data_loader_test.keys()) == 0, 'no test set found'
         start_time = time()
+        writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         for k, v in data_loader_test.items():
             self.__epoch_valid(v, writer=writer, prefix=k)
             self.release_cache()
