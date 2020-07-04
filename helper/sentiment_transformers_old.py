@@ -210,7 +210,7 @@ class TokenEncoder:
     def __init__(self,
                  transformer: str,
                  max_seq_length: int = None):
-        self.tokenizer = VALID_TOKENIZER[transformer].from_pretrained(transformer, cache_dir=CACHE_DIR)
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(transformer, cache_dir=CACHE_DIR)
         if max_seq_length and max_seq_length > self.tokenizer.max_len:
             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
@@ -385,7 +385,7 @@ class TransformerSequenceClassifier:
         #     cache_dir=CACHE_DIR,
         #     num_labels=len(list(label_dict.keys()))
         # )
-        # self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
+        self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
         #
         self.config = transformers.AutoConfig.from_pretrained(
             self.param('transformer'),
@@ -397,21 +397,20 @@ class TransformerSequenceClassifier:
         self.model_seq_cls = transformers.AutoModelForSequenceClassification.from_pretrained(
             self.param('transformer'), config=self.config
         )
-        self.token_encoder = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
+        # self.token_encoder = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
         self.data_parallel = False
-        if self.n_gpu == 1:
-            self.model_seq_cls = self.model_seq_cls.cuda()
-        elif self.n_gpu > 1:
+        self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
+        self.model_seq_cls.to(self.device)
+        if self.n_gpu > 1:
             self.data_parallel = True
             self.model_seq_cls = torch.nn.DataParallel(self.model_seq_cls.cuda())
             LOGGER.info('WARNING: torch.nn.DataParallel is not tested')
         else:
             self.n_gpu = 0
         LOGGER.info('running on %i GPUs' % self.n_gpu)
-        self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
 
         # optimizer
         if self.inference_mode:
