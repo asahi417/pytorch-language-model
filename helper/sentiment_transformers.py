@@ -68,6 +68,7 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None, allow_update: 
     else:
         return data_split
 
+
 class Argument:
     """ Model training arguments manager """
 
@@ -214,8 +215,8 @@ class TransformerSequenceClassification:
             self.dataset_split, self.label_to_id = get_dataset(self.args.dataset)
             with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
                 json.dump(self.label_to_id, f)
-
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
+
         self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
             self.args.transformer,
             config=transformers.AutoConfig.from_pretrained(
@@ -334,6 +335,7 @@ class TransformerSequenceClassification:
         start_time = time()
         for k, v in data_loader_test.items():
             self.__epoch_valid(v, writer=writer, prefix=k)
+            self.release_cache()
         writer.close()
         LOGGER.info('[test completed, %0.2f sec in total]' % (time() - start_time))
 
@@ -356,7 +358,9 @@ class TransformerSequenceClassification:
             with detect_anomaly():
                 while True:
                     if_training_finish = self.__epoch_train(data_loader['train'], writer=writer)
+                    self.release_cache()
                     if_early_stop = self.__epoch_valid(data_loader['valid'], writer=writer, prefix='valid')
+                    self.release_cache()
                     if if_training_finish or if_early_stop:
                         break
                     self.__epoch += 1
@@ -425,7 +429,6 @@ class TransformerSequenceClassification:
             if self.__step >= self.args.total_step:
                 LOGGER.info('reached maximum step')
                 return True
-        self.release_cache()
         return False
 
     def __epoch_valid(self, data_loader, writer, prefix: str='valid'):
@@ -440,7 +443,6 @@ class TransformerSequenceClassification:
             _, pred = torch.max(logit, 1)
             list_accuracy.append(((pred == encode['labels']).cpu().float().mean()).item())
             list_loss.append(loss.cpu().item())
-
         accuracy, loss = float(sum(list_accuracy)/len(list_accuracy)), float(sum(list_loss)/len(list_loss))
         LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
         writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
@@ -450,7 +452,6 @@ class TransformerSequenceClassification:
                 self.__best_val_score = accuracy
             if self.args.early_stop and self.__best_val_score - accuracy > self.args.early_stop:
                 return True
-        self.release_cache()
         return False
 
 
