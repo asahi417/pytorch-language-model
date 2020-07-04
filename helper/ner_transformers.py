@@ -352,7 +352,7 @@ class TransformerTokenClassification:
             label_to_id = json.load(open(label_id_file, 'r'))
             return ckpt_dict, label_to_id
         else:
-            return None, None
+            return None
 
     # def predict(self, x: list):
     #     """ model inference """
