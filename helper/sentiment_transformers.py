@@ -19,7 +19,6 @@ import transformers
 import torchtext
 import torch
 import numpy as np
-from itertools import chain
 from time import time
 from torch import optim
 from torch import nn
@@ -96,10 +95,11 @@ class Dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         encode = self.tokenizer.encode_plus(
             ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
-        encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
+        # encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
         if self.label is not None:
-            encode_tensor['labels'] = torch.tensor(self.label[idx], dtype=torch.long)
-        return encode_tensor
+            # encode_tensor['labels'] = torch.tensor(self.label[idx], dtype=torch.long)
+            encode['labels'] = self.label[idx]
+        return encode
 
 
 class Argument:
@@ -391,13 +391,16 @@ class TransformerSequenceClassification:
         self.writer.close()
         LOGGER.info('ckpt saved at %s' % self.args.checkpoint_dir)
 
+    def release_cache(self):
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+
     def __epoch_train(self, data_loader):
         """ train on single epoch return flag which is True if training has been completed """
         self.model.train()
         for i, encode in enumerate(data_loader, 1):
             # update model
-            print(encode.keys())
-            encode = {k: v.to(self.device) for k, v in encode.items()}
+            encode_tensor = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
             loss, logit = self.model(**encode)[0:2]
             if self.n_gpu > 1:

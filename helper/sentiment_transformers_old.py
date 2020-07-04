@@ -20,7 +20,6 @@ import transformers
 import torchtext
 import torch
 import numpy as np
-from time import time
 from torch import optim
 from torch import nn
 from torch.autograd import detect_anomaly
@@ -44,45 +43,44 @@ CKPT_DIR = os.getenv("CKPT_DIR", './ckpt')
 VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION = {
     'xlm-roberta-large': transformers.XLMRobertaForSequenceClassification,
     'xlm-roberta-base': transformers.XLMRobertaForSequenceClassification,
-    'bert-base-multilingual-cased': transformers.BertForSequenceClassification
-}
+    'bert-base-multilingual-cased': transformers.BertForSequenceClassification}
 VALID_TOKENIZER = {
     'xlm-roberta-large': transformers.XLMRobertaTokenizer,
     'xlm-roberta-base': transformers.XLMRobertaTokenizer,
-    'bert-base-multilingual-cased': transformers.BertTokenizer
-}
+    'bert-base-multilingual-cased': transformers.BertTokenizer}
+assert set(VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION.keys()) == set(VALID_TOKENIZER.keys())
 
 
-def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
+def get_dataset(data_name: str = 'sst',
+                get_label_dict_only: bool = False):
     """ download dataset file and return dictionary including training/validation split """
-    label_to_id = dict() if label_to_id is None else label_to_id
+    if get_label_dict_only:
+        return json.load(open(os.path.join(CACHE_DIR, data_name, 'label.json')))
 
-    def decode_data(iterator, file_prefix, _label_to_id):
-        if not os.path.exists(file_prefix + '.text') or not os.path.exists(file_prefix + '.label'):
-            list_text = []
-            list_label = []
-            for i in iterator:
-                if data_name == 'sst' and i.label == 'neutral':
-                    continue
-                # if i.label not in _label_to_id.keys():
-                #     _label_to_id[i.label] = len(_label_to_id)
-                list_text.append(' '.join(i.text))
-                list_label.append(i.label)
+    def decode_data(iterator, file_prefix, label_dict: dict):
+        if os.path.exists(file_prefix + '.text') and os.path.exists(file_prefix + '.label'):
+            list_of_text = open(file_prefix + '.text', 'r').read().split('\n')
+            list_of_label = [int(l) for l in open(file_prefix + '.label', 'r').read().split('\n')]
+            assert len(list_of_label) == len(list_of_text)
+            return label_dict, (list_of_text, list_of_label)
 
-            with open(file_prefix + '.text', 'w') as f_writer:
-                f_writer.write('\n'.join(list_text))
+        list_text = []
+        list_label = []
+        for i in iterator:
+            if data_name == 'sst' and i.label == 'neutral':
+                continue
+            if i.label not in label_dict.keys():
+                label_dict[i.label] = len(label_dict)
+            list_text.append(' '.join(i.text))
+            list_label.append(str(label_dict[i.label]))
 
-            with open(file_prefix + '.label', 'w') as f_writer:
-                f_writer.write('\n'.join(list_label))
+        with open(file_prefix + '.text', 'w') as f_writer:
+            f_writer.write('\n'.join(list_text))
 
-        list_of_text = open(file_prefix + '.text', 'r').read().split('\n')
-        list_of_label_raw = open(file_prefix + '.label', 'r').read().split('\n')
-        for unique_label in list(set(list_of_label_raw)):
-            if unique_label not in _label_to_id.keys():
-                _label_to_id[unique_label] = len(_label_to_id)
-        list_of_label = [int(_label_to_id[l]) for l in list_of_label_raw]
-        assert len(list_of_label) == len(list_of_text)
-        return _label_to_id, (list_of_text, list_of_label)
+        with open(file_prefix + '.label', 'w') as f_writer:
+            f_writer.write('\n'.join(list_label))
+
+        return label_dict, None
 
     data_field, label_field = torchtext.data.Field(sequential=True), torchtext.data.Field(sequential=False)
     if data_name == 'imdb':
@@ -93,13 +91,19 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
         raise ValueError('unknown dataset: %s' % data_name)
 
     data_split, data = list(), None
+    if os.path.exists(os.path.join(CACHE_DIR, data_name, 'label.json')):
+        label_dictionary = json.load(open(os.path.join(CACHE_DIR, data_name, 'label.json')))
+    else:
+        label_dictionary = dict()
 
     for name, it in zip(['train', 'valid', 'test'], iterator_split):
         _file_prefix = os.path.join(CACHE_DIR, data_name, name)
-        label_to_id, data = decode_data(it, file_prefix=_file_prefix, _label_to_id=label_to_id)
+        label_dictionary, data = decode_data(it, file_prefix=_file_prefix, label_dict=label_dictionary)
+        if data is None:
+            _, data = decode_data(it, file_prefix=_file_prefix, label_dict=label_dictionary)
         data_split.append(data)
         LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data[0])))
-    return data_split, label_to_id
+    return data_split, label_dictionary
 
 
 def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
@@ -210,10 +214,10 @@ class TokenEncoder:
         if max_seq_length and max_seq_length > self.tokenizer.max_len:
             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
-        LOGGER.info('max_sequence_length (LM max_sequence_length): %i (%i)'
-                    % (self.max_seq_length, self.tokenizer.max_len))
+        LOGGER.info('max_sequence_length: %i' % self.max_seq_length)
 
     def __call__(self, text):
+        # token_ids = self.tokenizer.encode(text)
         tokens_dict = self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
         token_ids = tokens_dict['input_ids']
         attention_mask = tokens_dict['attention_mask']
@@ -228,7 +232,10 @@ class Dataset(torch.utils.data.Dataset):
                  token_encoder,
                  label: list=None):
         self.data = data
-        self.label = label
+        if label is None:
+            self.label = None
+        else:
+            self.label = [int(l) for l in label]
         self.token_encoder = token_encoder
 
     def __len__(self):
@@ -339,7 +346,6 @@ class ParameterManager:
 
 
 class TransformerSequenceClassifier:
-    """ finetune transformers on text classification """
 
     def __init__(self,
                  dataset: str,
@@ -347,7 +353,7 @@ class TransformerSequenceClassifier:
                  checkpoint: str = None,
                  inference_mode: bool = False,
                  **kwargs):
-        """ finetune transformers on text classification """
+
         self.inference_mode = inference_mode
         if self.inference_mode:
             LOGGER.info('*** initialize network (INFERENCE MODE) ***')
@@ -356,6 +362,7 @@ class TransformerSequenceClassifier:
 
         # checkpoint versioning
         self.param = ParameterManager(prefix=dataset, checkpoint=checkpoint, dataset=dataset, **kwargs)
+        self.checkpoint_model = os.path.join(self.param.checkpoint_dir, 'model.pt')
         self.batch_size_validation = batch_size_validation if batch_size_validation else self.param('batch_size')
 
         # fix random seed
@@ -364,46 +371,35 @@ class TransformerSequenceClassifier:
         torch.manual_seed(self.param('random_seed'))
 
         # model/dataset setup
-        stats, label_to_id = self.load_ckpt()
         if self.inference_mode:
-            if stats is None or label_to_id is None:
-                raise ValueError('As no checkpoints found, unable to perform inference.')
-            self.dataset_split, self.label_to_id = None, label_to_id
-            self.token_encoder = TokenEncoder(self.param('transformer'))
-            self.writer = None
+            label_dict = json.load(open(os.path.join(CACHE_DIR, self.param('dataset'), 'label.json')))
+            self.dataset_split = None
         else:
-            self.dataset_split, self.label_to_id = get_dataset(self.param('dataset'), label_to_id=label_to_id)
-            self.token_encoder = TokenEncoder(self.param('transformer'), max_seq_length=self.param('max_seq_length'))
-            self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
+            self.dataset_split, label_dict = get_dataset(self.param('dataset'))
+            with open(os.path.join(CACHE_DIR, self.param('dataset'), 'label.json'), 'w') as f:
+                json.dump(label_dict, f)
+        self.id_to_label = dict([(str(v), str(k)) for k, v in label_dict.items()])
 
-        self.id_to_label = dict([(str(v), str(k)) for k, v in self.label_to_id.items()])
         self.model_seq_cls = VALID_TRANSFORMER_SEQUENCE_CLASSIFICATION[self.param('transformer')].from_pretrained(
             self.param('transformer'),
             cache_dir=CACHE_DIR,
-            num_labels=len(list(self.id_to_label.keys())),
-            output_hidden_states=True
+            num_labels=len(list(label_dict.keys()))
         )
+        self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
 
-        # load checkpoint
-        if stats is not None:
-            self.__step = stats['step']  # num of training step
-            self.__epoch = stats['epoch']  # num of epoch
-            self.__best_val_accuracy = stats['best_val_accuracy']
-            self.__best_val_accuracy_step = stats['best_val_accuracy_step']
-            if self.inference_mode:
-                self.__best_model_wts = None
-                self.model_seq_cls.load_state_dict(stats['best_model_state_dict'])
-                LOGGER.info('use best ckpt from step %i / %i' % (self.__best_val_accuracy_step, self.__step))
-            else:
-                self.__best_model_wts = stats['best_model_state_dict']
-                self.model_seq_cls.load_state_dict(stats['model_state_dict'])
-            del stats
+        # GPU allocation
+        self.n_gpu = torch.cuda.device_count()
+        self.data_parallel = False
+        if self.n_gpu == 1:
+            self.model_seq_cls = self.model_seq_cls.cuda()
+        elif self.n_gpu > 1:
+            self.data_parallel = True
+            self.model_seq_cls = torch.nn.DataParallel(self.model_seq_cls.cuda())
+            LOGGER.info('WARNING: torch.nn.DataParallel is not tested')
         else:
-            self.__step = 0
-            self.__epoch = 0
-            self.__best_val_accuracy = None
-            self.__best_val_accuracy_step = None
-            self.__best_model_wts = None
+            self.n_gpu = 0
+        LOGGER.info('running on %i GPUs' % self.n_gpu)
+        self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
 
         # optimizer
         if self.inference_mode:
@@ -432,47 +428,38 @@ class TransformerSequenceClassifier:
             else:
                 raise ValueError('bad scheduler: %s' % self.param('scheduler'))
 
-            # apply checkpoint statistics to optimizer/scheduler
-            if stats is not None:
-                self.optimizer.load_state_dict(stats['optimizer_state_dict'])
-                self.scheduler.load_state_dict(stats['scheduler_state_dict'])
-
-        # GPU allocation
-        self.n_gpu = torch.cuda.device_count()
-        self.data_parallel = False
-        if self.n_gpu == 1:
-            self.model_seq_cls = self.model_seq_cls.cuda()
-        elif self.n_gpu > 1:  # TODO: test multi-GPUs
-            self.data_parallel = True
-            self.model_seq_cls = torch.nn.DataParallel(self.model_seq_cls.cuda())
-            LOGGER.info('WARNING: torch.nn.DataParallel is not tested')
+        # load ckpt
+        if os.path.exists(self.checkpoint_model):
+            ckpt = torch.load(self.checkpoint_model, map_location='cpu')
+            self.__step = ckpt['step']  # num of training step
+            self.__epoch = ckpt['epoch']  # num of epoch
+            self.__best_val_loss = ckpt['best_val_loss']
+            self.__best_val_loss_step = ckpt['best_val_loss_step']
+            self.__best_model_wts = ckpt['best_model_state_dict']
+            LOGGER.info('load ckpt from %s' % self.checkpoint_model)
+            if self.inference_mode:
+                self.model_seq_cls.load_state_dict(ckpt['best_model_state_dict'])
+                LOGGER.info('load best ckpt from step %i / %i' % (self.__best_val_loss_step, self.__step))
+            else:
+                self.model_seq_cls.load_state_dict(ckpt['model_state_dict'])
+                self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+                self.scheduler.load_state_dict(ckpt['scheduler_state_dict'])
         else:
-            self.n_gpu = 0
-        LOGGER.info('running on %i GPUs' % self.n_gpu)
-        self.device = 'cuda' if self.n_gpu > 0 else 'cpu'
+            self.__step = 0
+            self.__epoch = 0
+            self.__best_val_loss = None
+            self.__best_val_loss_step = None
+            self.__best_model_wts = None
 
-    def load_ckpt(self):
-        checkpoint_file = os.path.join(self.param.checkpoint_dir, 'model.pt')
-        label_id_file = os.path.join(self.param.checkpoint_dir, 'label_to_id.json')
-        if os.path.exists(checkpoint_file):
-            assert os.path.exists(label_id_file)
-            LOGGER.info('load ckpt from %s' % checkpoint_file)
-            ckpt = torch.load(checkpoint_file, map_location='cpu')
-            ckpt_dict = dict(
-                step=ckpt['step'],
-                epoch=ckpt['epoch'],
-                model_state_dict=ckpt['model_state_dict'],
-                best_val_accuracy=ckpt['best_val_accuracy'],
-                best_val_accuracy_step=ckpt['best_val_accuracy_step'],
-                best_model_wts=ckpt['best_model_state_dict'],
-                best_model_state_dict=ckpt['best_model_state_dict'],
-                optimizer_state_dict=ckpt['optimizer_state_dict'],
-                scheduler_state_dict=ckpt['scheduler_state_dict'],
-            )
-            label_to_id = json.load(open(label_id_file, 'r'))
-            return ckpt_dict, label_to_id
+        # log
+        if self.inference_mode:
+            self.writer = None
         else:
-            return None, None
+            self.writer = SummaryWriter(log_dir=self.param.checkpoint_dir)
+
+    def release_cache(self):
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
 
     def predict(self,
                 x: list,
@@ -507,24 +494,22 @@ class TransformerSequenceClassifier:
             raise ValueError('model is on an inference mode')
 
         # setup data loader
-        start_time = time()
         LOGGER.info('setup dataset')
+        dataset_split, _ = get_dataset(self.param('dataset'))
         data_loader_train = torch.utils.data.DataLoader(
-            Dataset(self.dataset_split[0][0], label=self.dataset_split[0][1], token_encoder=self.token_encoder),
+            Dataset(dataset_split[0][0], label=dataset_split[0][1], token_encoder=self.token_encoder),
             batch_size=self.param('batch_size'),
             shuffle=True,
             num_workers=NUM_WORKER,
             drop_last=True)
         data_loader_valid = torch.utils.data.DataLoader(
-            Dataset(self.dataset_split[1][0], label=self.dataset_split[1][1], token_encoder=self.token_encoder),
+            Dataset(dataset_split[1][0], label=dataset_split[1][1], token_encoder=self.token_encoder),
             batch_size=self.batch_size_validation,
             num_workers=NUM_WORKER)
-        if len(self.dataset_split) > 2:
+        if len(dataset_split) > 2:
             data_loader_test = torch.utils.data.DataLoader(
-                Dataset(self.dataset_split[2][0], label=self.dataset_split[2][1], token_encoder=self.token_encoder),
-                batch_size=self.batch_size_validation,
-                num_workers=NUM_WORKER
-            )
+                Dataset(dataset_split[2][0], label=dataset_split[2][1], token_encoder=self.token_encoder),
+                batch_size=self.param('batch_size'))
         else:
             data_loader_test = None
 
@@ -532,12 +517,16 @@ class TransformerSequenceClassifier:
         try:
             with detect_anomaly():
                 while True:
+
+                    self.release_cache()
                     if_training_finish = self.__epoch_train(data_loader_train)
+
+                    self.release_cache()
                     if_early_stop = self.__epoch_valid(data_loader_valid, prefix='valid')
 
                     if if_training_finish or if_early_stop:
                         if data_loader_test:
-                            self.__epoch_valid(data_loader_test, prefix='test')
+                            self.__epoch_valid(data_loader_valid, prefix='test')
                         break
                     self.__epoch += 1
 
@@ -548,32 +537,30 @@ class TransformerSequenceClassifier:
         except KeyboardInterrupt:
             LOGGER.info('*** KeyboardInterrupt ***')
 
-        if self.__best_val_accuracy is None or self.__best_val_accuracy_step is None:
+        if self.__best_val_loss is None:
             self.param.remove_ckpt()
             exit('nothing to be saved')
 
-        LOGGER.info('[training completed]')
-        LOGGER.info(' - best valid accuracy: %0.3f' % self.__best_val_accuracy)
-        LOGGER.info(' - best valid accuracy step: %i' % self.__best_val_accuracy_step)
-        LOGGER.info(' - full training time: %0.2f' % (time() - start_time))
+        LOGGER.info('[training completed] best model: valid loss %0.3f at step %i'
+                    % (self.__best_val_loss, self.__best_val_loss_step))
+
         if self.data_parallel:
             model_wts = self.model_seq_cls.module.state_dict()
         else:
             model_wts = self.model_seq_cls.state_dict()
+
         torch.save({
             'model_state_dict': model_wts,
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'step': self.__step,
             'epoch': self.__epoch,
-            'best_val_accuracy': self.__best_val_accuracy,
-            'best_val_accuracy_step': self.__best_val_accuracy_step,
+            'best_val_loss': self.__best_val_loss,
+            'best_val_loss_step': self.__best_val_loss_step,
             'best_model_state_dict': self.__best_model_wts
-        }, os.path.join(self.param.checkpoint_dir, 'model.pt'))
-        with open(os.path.join(self.param.checkpoint_dir, 'label_to_id.json'), 'w') as f:
-            json.dump(self.label_to_id, f)
+        }, self.checkpoint_model)
         self.writer.close()
-        LOGGER.info('ckpt saved at %s' % self.param.checkpoint_dir)
+        LOGGER.info('ckpt saved at %s' % self.checkpoint_model)
 
     def __epoch_train(self, data_loader):
         """ train on single epoch return flag which is True if training has been completed """
@@ -590,21 +577,19 @@ class TransformerSequenceClassifier:
             # forward: output prediction and get loss
             model_outputs = self.model_seq_cls(inputs, attention_mask=attn_mask, labels=outputs)
             loss, logit = model_outputs[0:2]
+
             if self.data_parallel:
                 loss = torch.mean(loss)
-            _, pred = torch.max(logit, 1)
 
+            _, pred = torch.max(logit, 1)
             # backward: calculate gradient
             loss.backward()
-
             # gradient clip
             if self.param('clip') is not None:
                 nn.utils.clip_grad_norm_(self.model_seq_cls.parameters(), self.param('clip'))
-
             # optimizer and scheduler step
             self.optimizer.step()
             self.scheduler.step()
-
             # instantaneous accuracy, loss, and learning rate
             inst_accuracy = ((pred == outputs).cpu().float().mean()).item()
             inst_loss = loss.cpu().item()
@@ -617,17 +602,20 @@ class TransformerSequenceClassifier:
             if self.__step % PROGRESS_INTERVAL == 0:
                 LOGGER.info(' * (step %i) accuracy: %.3f, loss: %.3f, lr: %0.8f'
                             % (self.__step, inst_accuracy, inst_loss, inst_lr))
+
             self.__step += 1
+
             if self.__step >= self.param('total_step'):
                 LOGGER.info('reached total step')
                 return True
 
         return False
 
-    def __epoch_valid(self, data_loader, prefix: str='valid', is_valid: bool = True):
+    def __epoch_valid(self, data_loader, prefix: str='valid'):
         """ validation/test """
         self.model_seq_cls.eval()
         list_accuracy, list_loss = [], []
+
         for inputs, attn_mask, outputs in data_loader:
 
             inputs = inputs.to(self.device)
@@ -643,22 +631,23 @@ class TransformerSequenceClassifier:
             list_loss.append(loss.cpu().item())
 
         accuracy, loss = float(np.mean(list_accuracy)), float(np.mean(list_loss))
+
         self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
         self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
         LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
-        if not is_valid:
-            return False
-        if self.__best_val_accuracy is None or accuracy > self.__best_val_accuracy:
-            self.__best_val_accuracy = accuracy
-            self.__best_val_accuracy_step = self.__step
+
+        if self.__best_val_loss is None or loss < self.__best_val_loss:
+            self.__best_val_loss = loss
+            self.__best_val_loss_step = self.__step
             if self.data_parallel:
                 self.__best_model_wts = copy.deepcopy(self.model_seq_cls.module.state_dict())
             else:
                 self.__best_model_wts = copy.deepcopy(self.model_seq_cls.state_dict())
-        elif self.param('tolerance') is not None:
-            if self.param('tolerance') < self.__best_val_accuracy - accuracy:
-                LOGGER.info('early stop:\n - best accuracy: %0.3f \n - current accuracy: %0.3f'
-                            % (self.__best_val_accuracy, accuracy))
+        else:
+            loss_margin = loss - self.__best_val_loss
+            if self.param('tolerance') is not None and self.param('tolerance') < loss_margin:
+                LOGGER.info('early stop as loss exceeds tolerance: %0.2f < %0.2f '
+                            % (self.param('tolerance'), loss_margin))
                 return True
         return False
 
@@ -674,7 +663,7 @@ def get_options():
                         type=str)
     parser.add_argument('--max-seq-length',
                         help='max sequence length (use same length as used in pre-training if not provided)',
-                        default=128,
+                        default=None,
                         type=int)
     parser.add_argument('--random-seed', help='random seed', default=1234, type=int)
     parser.add_argument('--lr', help='learning rate', default=2e-5, type=float)
@@ -689,7 +678,7 @@ def get_options():
                         type=int)
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
-    parser.add_argument('--tolerance', help='early stop tolerance in terms of valid accuracy', default=None, type=float)
+    parser.add_argument('--tolerance', help='early stop tolerance in terms of valid loss', default=None, type=float)
     parser.add_argument('--checkpoint', help='checkpoint to load', default=None, type=str)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
     return parser.parse_args()
