@@ -95,9 +95,7 @@ class Dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         encode = self.tokenizer.encode_plus(
             ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
-        # encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
         if self.label is not None:
-            # encode_tensor['labels'] = torch.tensor(self.label[idx], dtype=torch.long)
             encode['labels'] = self.label[idx]
         return encode
 
@@ -219,17 +217,24 @@ class TransformerSequenceClassification:
             self.dataset_split, self.label_to_id = get_dataset(self.args.dataset, label_to_id=label_to_id)
             self.writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
-        self.config = transformers.AutoConfig.from_pretrained(
+        # self.config = transformers.AutoConfig.from_pretrained(
+        #     self.args.transformer,
+        #     num_labels=len(self.id_to_label),
+        #     id2label=self.id_to_label,
+        #     label2id=self.label_to_id,
+        #     cache_dir=CACHE_DIR,
+        # )
+        # self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
+        #     self.args.transformer, config=self.config
+        # )
+        # self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
+        self.model = transformers.XLMRobertaForSequenceClassification.from_pretrained(
             self.args.transformer,
-            num_labels=len(self.id_to_label),
-            id2label=self.id_to_label,
-            label2id=self.label_to_id,
             cache_dir=CACHE_DIR,
+            num_labels=len(list(self.id_to_label.keys()))
         )
-        self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
-            self.args.transformer, config=self.config
-        )
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
+        self.tokenizer = transformers.XLMRobertaTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
+
         # optimizer
         if self.inference_mode:
             self.optimizer = self.scheduler = None
@@ -400,7 +405,7 @@ class TransformerSequenceClassification:
         self.model.train()
         for i, encode in enumerate(data_loader, 1):
             # update model
-            encode_tensor = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
+            encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
             loss, logit = self.model(**encode)[0:2]
             if self.n_gpu > 1:
