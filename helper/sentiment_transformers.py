@@ -189,7 +189,7 @@ class TransformerSequenceClassification:
     """ finetune transformers on text classification """
 
     def __init__(self, dataset: str, batch_size_validation: int = None,
-                 checkpoint: str = None, inference_mode: bool = False, **kwargs):
+                 checkpoint: str = None, inference_mode: bool = False, tensorboard: bool = True, **kwargs):
         self.inference_mode = inference_mode
         LOGGER.info('*** initialize network (INFERENCE MODE: %s) ***' % str(self.inference_mode))
 
@@ -209,10 +209,9 @@ class TransformerSequenceClassification:
             if stats is None or label_to_id is None:
                 raise ValueError('As no checkpoints found, unable to perform inference.')
             self.dataset_split, self.label_to_id = None, label_to_id
-            self.writer = None
         else:
             self.dataset_split, self.label_to_id = get_dataset(self.args.dataset, label_to_id=label_to_id)
-            self.writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
+        self.writer = SummaryWriter(log_dir=self.args.checkpoint_dir) if tensorboard else None
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
         self.model = transformers.AutoModelForSequenceClassification.from_pretrained(
             self.args.transformer,
@@ -320,8 +319,25 @@ class TransformerSequenceClassification:
     #     prob = [dict([(self.id_to_label[str(i)], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
     #     return prediction, prob
 
+    def test(self):
+        LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_test.log')))
+        if self.inference_mode:
+            raise ValueError('model is on an inference mode')
+
+        LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
+        start_time = time()
+        data_loader_test = {k: torch.utils.data.DataLoader(
+            Dataset(**v, transform_function=self.transforms),
+            num_workers=NUM_WORKER,
+            batch_size=self.args.batch_size)
+            for k, v in self.dataset_split.items() if k not in ['train', 'valid']}
+        LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
+        for k, v in data_loader_test.items():
+            self.__epoch_valid(v, prefix=k)
+        LOGGER.info('[test completed, %0.2f sec in total]' % (time() - start_time))
+
     def train(self):
-        LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger.log')))
+        LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_train.log')))
         if self.inference_mode:
             raise ValueError('model is on an inference mode')
 
@@ -334,13 +350,7 @@ class TransformerSequenceClassification:
             shuffle=k == 'train',
             drop_last=k == 'train')
             for k in ['train', 'valid']}
-        # data_loader_test = {k: torch.utils.data.DataLoader(
-        #     Dataset(**v, transform_function=self.transforms),
-        #     num_workers=NUM_WORKER,
-        #     batch_size=self.batch_size_validation)
-        #     for k, v in self.dataset_split.items()}
         LOGGER.info('data_loader     : %s' % str(list(data_loader.keys())))
-        # LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
         try:
             with detect_anomaly():
                 while True:
@@ -349,9 +359,6 @@ class TransformerSequenceClassification:
                     if if_training_finish or if_early_stop:
                         break
                     self.__epoch += 1
-                # for k, v in data_loader.items():
-                #     self.__epoch_valid(v, prefix=k)
-
         except RuntimeError:
             LOGGER.info(traceback.format_exc())
             LOGGER.info('*** RuntimeError (NaN found, see above log in detail) ***')
@@ -378,7 +385,8 @@ class TransformerSequenceClassification:
         }, os.path.join(self.args.checkpoint_dir, 'model.pt'))
         with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
             json.dump(self.label_to_id, f)
-        self.writer.close()
+        if self.writer:
+            self.writer.close()
         LOGGER.info('ckpt saved at %s' % self.args.checkpoint_dir)
 
     def release_cache(self):
@@ -408,9 +416,10 @@ class TransformerSequenceClassification:
             inst_accuracy = ((pred == encode['labels']).cpu().float().mean()).item()
             inst_loss = loss.cpu().detach().item()
             inst_lr = self.optimizer.param_groups[0]['lr']
-            self.writer.add_scalar('train/loss', inst_loss, self.__step)
-            self.writer.add_scalar('train/learning_rate', inst_lr, self.__step)
-            self.writer.add_scalar('train/accuracy', inst_accuracy, self.__step)
+            if self.writer:
+                self.writer.add_scalar('train/loss', inst_loss, self.__step)
+                self.writer.add_scalar('train/learning_rate', inst_lr, self.__step)
+                self.writer.add_scalar('train/accuracy', inst_accuracy, self.__step)
             if self.__step % PROGRESS_INTERVAL == 0:
                 LOGGER.info('[epoch %i] * (training step %i) loss: %.3f, lr: %0.8f'
                             % (self.__epoch, self.__step, inst_loss, inst_lr))
@@ -437,9 +446,10 @@ class TransformerSequenceClassification:
 
         accuracy, loss = float(sum(list_accuracy)/len(list_accuracy)), float(sum(list_loss)/len(list_loss))
         LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
-        if prefix == 'valid':
+        if self.writer:
             self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
             self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
+        if prefix == 'valid':
             if self.__best_val_score is None or accuracy > self.__best_val_score:
                 self.__best_val_score = accuracy
             if self.args.early_stop and self.__best_val_score - accuracy > self.args.early_stop:
@@ -473,6 +483,7 @@ def get_options():
     parser.add_argument('--weight-decay', help='weight decay', default=1e-7, type=float)
     parser.add_argument('--early-stop', help='value of accuracy drop for early stop', default=0.1, type=float)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
+    parser.add_argument('--test', help='run over testdataset', action='store_true')
     parser.add_argument('--fp16', help='fp16', action='store_true')
     return parser.parse_args()
 

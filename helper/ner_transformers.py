@@ -203,7 +203,7 @@ class Dataset(torch.utils.data.Dataset):
         self.label = self.fix_label(label, data, transform_function.tokenize, transform_function.all_special_ids)
 
     @staticmethod
-    def fix_label(self, label, data, tokenizer, all_special_ids):
+    def fix_label(label, data, tokenizer, all_special_ids):
         assert len(label) == len(data)
         fixed_labels = []
         for x, y in zip(label, data):
