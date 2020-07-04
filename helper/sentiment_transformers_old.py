@@ -502,16 +502,14 @@ class TransformerSequenceClassifier:
         """ train on single epoch return flag which is True if training has been completed """
         self.model_seq_cls.train()
 
-        for i, (inputs, attn_mask, outputs) in enumerate(data_loader, 1):
+        for i, encode in enumerate(data_loader, 1):
 
-            inputs = inputs.to(self.device)
-            attn_mask = attn_mask.to(self.device)
-            outputs = outputs.to(self.device)
+            encode = {k: v.to(self.device) for k, v in encode.items()}
 
             # zero the parameter gradients
             self.optimizer.zero_grad()
             # forward: output prediction and get loss
-            model_outputs = self.model_seq_cls(inputs, attention_mask=attn_mask, labels=outputs)
+            model_outputs = self.model_seq_cls(**encode)
             loss, logit = model_outputs[0:2]
 
             if self.data_parallel:
@@ -527,7 +525,7 @@ class TransformerSequenceClassifier:
             self.optimizer.step()
             self.scheduler.step()
             # instantaneous accuracy, loss, and learning rate
-            inst_accuracy = ((pred == outputs).cpu().float().mean()).item()
+            inst_accuracy = ((pred == encode['labels']).cpu().float().mean()).item()
             inst_loss = loss.cpu().item()
             inst_lr = self.optimizer.param_groups[0]['lr']
             # log

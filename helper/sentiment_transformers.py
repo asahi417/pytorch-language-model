@@ -228,12 +228,6 @@ class TransformerSequenceClassification:
             self.args.transformer, config=self.config
         )
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
-        # self.model = transformers.XLMRobertaForSequenceClassification.from_pretrained(
-        #     self.args.transformer,
-        #     cache_dir=CACHE_DIR,
-        #     num_labels=len(list(self.id_to_label.keys()))
-        # )
-        # self.tokenizer = transformers.XLMRobertaTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
 
         # optimizer
         if self.inference_mode:
