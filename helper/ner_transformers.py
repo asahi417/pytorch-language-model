@@ -1,11 +1,4 @@
-""" self-contained NER finetuning on hugginface.transformers (conll_2003/wnut_17)
-
-- checkpoint managers: different ckpt id will be given to different configuration
-- dataset: sst/imdb dataset will be automatically fetched from source and compile as DataLoader
-- multiGPU support
-- command line interface for testing inference
-- see https://huggingface.co/transformers/_modules/transformers/optimization.html#AdamW for AdamW and linear scheduler
-"""
+""" self-contained NER finetuning on hugginface.transformers (conll_2003/wnut_17) """
 
 import traceback
 import argparse
@@ -38,6 +31,7 @@ NUM_WORKER = int(os.getenv("NUM_WORKER", '4'))
 PROGRESS_INTERVAL = int(os.getenv("PROGRESS_INTERVAL", '100'))
 CACHE_DIR = os.getenv("CACHE_DIR", './cache')
 CKPT_DIR = os.getenv("CKPT_DIR", './ckpt')
+PAD_TOKEN_LABEL_ID = nn.CrossEntropyLoss().ignore_index
 
 
 def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None):
@@ -90,40 +84,6 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None):
         data_split[name] = data_dict
         LOGGER.info('dataset %s/%s: %i entries' % (data_name, filepath, len(data_dict['data'])))
     return data_split, label_to_id
-
-
-class Dataset(torch.utils.data.Dataset):
-    """ torch.utils.data.Dataset with transformer tokenizer """
-
-    def __init__(self, data: list, transformer_tokenizer, pad_token_label_id,
-                 max_seq_length: int = None, label: list = None, pad_to_max_length: bool = True):
-        self.data = data  # list of half-space split tokens
-        self.label = label  # list of label sequence
-        self.pad_to_max_length = pad_to_max_length
-        self.tokenizer = transformer_tokenizer
-        self.pad_token_label_id = pad_token_label_id
-        if max_seq_length and max_seq_length > self.tokenizer.max_len:
-            raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
-        self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        encode = self.tokenizer.encode_plus(
-            ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
-        encode_tensor = {k: torch.tensor(v, dtype=torch.long) for k, v in encode.items()}
-        if self.label is not None:
-            assert len(self.label[idx]) == len(self.data[idx])
-            # Use the real label id for the first token of the word, and padding ids for the remaining tokens
-            fixed_label = list(chain(*[
-                [label] + [self.pad_token_label_id] * (len(self.tokenizer.tokenize(word)) - 1)
-                for label, word in zip(self.label[idx], self.data[idx])]))
-            if encode['input_ids'][0] in self.tokenizer.all_special_ids:
-                fixed_label = [self.pad_token_label_id] + fixed_label
-            fixed_label += [self.pad_token_label_id] * (len(encode['input_ids']) - len(fixed_label))
-            encode_tensor['labels'] = torch.tensor(fixed_label, dtype=torch.long)
-        return encode_tensor
 
 
 class Argument:
@@ -212,10 +172,66 @@ class Argument:
                 return target_checkpoints_path, parameter
 
 
+class Transforms:
+    """ Text encoder with transformers tokenizer """
+
+    def __init__(self, transformer_tokenizer: str, max_seq_length: int = None, pad_to_max_length: bool = True):
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(transformer_tokenizer, cache_dir=CACHE_DIR)
+        if max_seq_length and max_seq_length > self.tokenizer.max_len:
+            raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
+        self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
+        self.pad_to_max_length = pad_to_max_length
+
+    def __call__(self, text: str):
+        return self.tokenizer.encode_plus(
+            text, max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
+
+    @property
+    def all_special_ids(self):
+        return self.tokenizer.all_special_ids
+
+    def tokenize(self, *args, **kwargs):
+        return self.tokenizer.tokenize(*args, **kwargs)
+
+
+class Dataset(torch.utils.data.Dataset):
+    """ torch.utils.data.Dataset with transformer tokenizer """
+
+    def __init__(self, data: list, transform_function, label: list = None):
+        self.data = data  # list of half-space split tokens
+        self.label = self.fix_label(label, data)  # list of label sequence
+        self.transform_function = transform_function
+
+    def fix_label(self, label, data):
+        assert len(label) == len(data)
+        fixed_labels = []
+        for x, y in zip(label, data):
+            assert len(y) == len(x)
+            encode = self.transform_function(' '.join(x))
+            fixed_label = list(chain(*[
+                [label] + [PAD_TOKEN_LABEL_ID] * (len(self.transform_function.tokenize(word)) - 1)
+                for label, word in zip(y, x)]))
+            if encode['input_ids'][0] in self.transform_function.all_special_ids:
+                fixed_label = [PAD_TOKEN_LABEL_ID] + fixed_label
+            fixed_label += [PAD_TOKEN_LABEL_ID] * (len(encode['input_ids']) - len(fixed_label))
+            fixed_labels.append(fixed_label)
+        return fixed_labels
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        encode = self.transform_function(' '.join(self.data[idx]))
+        if self.label is not None:
+            encode['labels'] = self.label[idx]
+        float_list = ['attention_mask']
+        encode = {k: torch.tensor(v, dtype=torch.float32) if k in float_list else torch.tensor(v, dtype=torch.long)
+                  for k, v in encode.items()}
+        return encode
+
+
 class TransformerTokenClassification:
     """ finetune transformers on token classification """
-
-    pad_token_label_id = nn.CrossEntropyLoss().ignore_index
 
     def __init__(self, dataset: str, batch_size_validation: int = None,
                  checkpoint: str = None, inference_mode: bool = False, **kwargs):
@@ -243,30 +259,16 @@ class TransformerTokenClassification:
             self.dataset_split, self.label_to_id = get_dataset(self.args.dataset, label_to_id=label_to_id)
             self.writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
-        # self.config = transformers.AutoConfig.from_pretrained(
-        #     self.args.transformer,
-        #     num_labels=len(self.id_to_label),
-        #     id2label=self.id_to_label,
-        #     label2id=self.label_to_id,
-        #     cache_dir=CACHE_DIR,
-        # )
-        # self.model = transformers.AutoModelForTokenClassification.from_pretrained(
-        #     self.args.transformer, config=self.config
-        # )
-        # self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
-        # self.config = transformers.XLMRobertaConfig.from_pretrained(
-        #     self.args.transformer,
-        #     num_labels=len(self.id_to_label),
-        #     id2label=self.id_to_label,
-        #     label2id=self.label_to_id,
-        #     cache_dir=CACHE_DIR
-        # )
-        self.model = transformers.XLMRobertaForSequenceClassification.from_pretrained(
+        self.model = transformers.AutoModelForTokenClassification.from_pretrained(
             self.args.transformer,
-            cache_dir=CACHE_DIR,
-            num_labels=len(list(self.id_to_label.keys()))
+            config=transformers.AutoConfig.from_pretrained(
+                self.args.transformer,
+                num_labels=len(self.id_to_label),
+                id2label=self.id_to_label,
+                label2id=self.label_to_id,
+                cache_dir=CACHE_DIR)
         )
-        self.tokenizer = transformers.XLMRobertaTokenizer.from_pretrained(self.args.transformer, cache_dir=CACHE_DIR)
+        self.transforms = Transforms(self.args.transformer, self.args.max_seq_length)
 
         # optimizer
         if self.inference_mode:
@@ -296,19 +298,16 @@ class TransformerTokenClassification:
                 raise ValueError('unknown scheduler: %s' % self.args.scheduler)
 
         # load checkpoint
-        self.__step = 0
-        self.__epoch = 0
-        self.__best_val_score = None
-        if stats is not None:
-            self.__step = stats['step']  # num of training step
-            self.__epoch = stats['epoch']  # num of epoch
-            self.__best_val_score = stats['best_val_score']
-            self.model.load_state_dict(stats['model_state_dict'])
+        self.__step = 0 if stats is None else stats['step']  # num of training step
+        self.__epoch = 0 if stats is None else stats['epoch']  # num of epoch
+        self.__best_val_score = None if stats is None else stats['best_val_score']
 
         # apply checkpoint statistics to optimizer/scheduler
-        if stats is not None and self.optimizer is not None and self.scheduler is not None:
-            self.optimizer.load_state_dict(stats['optimizer_state_dict'])
-            self.scheduler.load_state_dict(stats['scheduler_state_dict'])
+        if stats is not None:
+            self.model.load_state_dict(stats['model_state_dict'])
+            if self.optimizer is not None and self.scheduler is not None:
+                self.optimizer.load_state_dict(stats['optimizer_state_dict'])
+                self.scheduler.load_state_dict(stats['scheduler_state_dict'])
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
@@ -354,15 +353,15 @@ class TransformerTokenClassification:
         else:
             return None, None
 
-    def predict(self, x: list):
-        """ model inference """
-        self.model.eval()
-        encode = self.tokenizer.batch_encode_plus(x)
-        encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
-        logit = self.model(**encode)[0]
-        pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
-        prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
-        return prediction
+    # def predict(self, x: list):
+    #     """ model inference """
+    #     self.model.eval()
+    #     encode = self.transforms(x)
+    #     encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
+    #     logit = self.model(**encode)[0]
+    #     pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
+    #     prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
+    #     return prediction
 
     def train(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger.log')))
@@ -371,21 +370,20 @@ class TransformerTokenClassification:
 
         LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
         start_time = time()
-        shared = {"transformer_tokenizer": self.tokenizer, "pad_token_label_id": self.pad_token_label_id}
         data_loader = {k: torch.utils.data.DataLoader(
-            Dataset(**self.dataset_split.pop(k), **shared),
+            Dataset(**self.dataset_split.pop(k), transform_function=self.transforms),
             num_workers=NUM_WORKER,
             batch_size=self.args.batch_size if k == 'train' else self.batch_size_validation,
             shuffle=k == 'train',
             drop_last=k == 'train')
             for k in ['train', 'valid']}
-        data_loader_test = {k: torch.utils.data.DataLoader(
-            Dataset(**v, **shared),
-            num_workers=NUM_WORKER,
-            batch_size=self.batch_size_validation)
-            for k, v in self.dataset_split.items()}
+        # data_loader_test = {k: torch.utils.data.DataLoader(
+        #     Dataset(**v, **shared),
+        #     num_workers=NUM_WORKER,
+        #     batch_size=self.batch_size_validation)
+        #     for k, v in self.dataset_split.items()}
         LOGGER.info('data_loader     : %s' % str(list(data_loader.keys())))
-        LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
+        # LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
         try:
             with detect_anomaly():
                 while True:
@@ -394,8 +392,8 @@ class TransformerTokenClassification:
                     if if_training_finish or if_early_stop:
                         break
                     self.__epoch += 1
-                for k, v in data_loader.items():
-                    self.__epoch_valid(v, prefix=k)
+                # for k, v in data_loader.items():
+                #     self.__epoch_valid(v, prefix=k)
 
         except RuntimeError:
             LOGGER.info(traceback.format_exc())
@@ -476,7 +474,7 @@ class TransformerTokenClassification:
             for b in range(len(_true)):
                 _pred_list, _true_list = [], []
                 for s in range(len(_true[b])):
-                    if _true[b][s] != self.pad_token_label_id:
+                    if _true[b][s] != PAD_TOKEN_LABEL_ID:
                         _true_list.append(self.id_to_label[_pred[b][s]])
                         _pred_list.append(self.id_to_label[_true[b][s]])
                 assert len(_pred_list) == len(_true_list)
@@ -550,8 +548,8 @@ if __name__ == '__main__':
     )
     if classifier.inference_mode:
 
-        predictions = classifier.predict(['I live in London', '東京は今日も暑いです'])
-        print(predictions)
+        # predictions = classifier.predict(['I live in London', '東京は今日も暑いです'])
+        # print(predictions)
 
         # while True:
         #     _inp = input('input sentence >>>')

@@ -160,7 +160,7 @@ class Transforms:
             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
 
-    def __call__(self, text):
+    def __call__(self, text: str):
         return self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
 
 
@@ -308,17 +308,17 @@ class TransformerSequenceClassification:
         else:
             return None, None
 
-    def predict(self, x: list):
-        """ model inference """
-        self.model.eval()
-        encode = self.transforms(x)
-        logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
-        _, _pred = torch.max(logit, dim=1)
-        _pred_list = _pred.cpu().tolist()
-        _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
-        prediction = [self.id_to_label[str(_p)] for _p in _pred_list]
-        prob = [dict([(self.id_to_label[str(i)], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
-        return prediction, prob
+    # def predict(self, x: list):
+    #     """ model inference """
+    #     self.model.eval()
+    #     encode = self.transforms(x)
+    #     logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
+    #     _, _pred = torch.max(logit, dim=1)
+    #     _pred_list = _pred.cpu().tolist()
+    #     _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
+    #     prediction = [self.id_to_label[str(_p)] for _p in _pred_list]
+    #     prob = [dict([(self.id_to_label[str(i)], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
+    #     return prediction, prob
 
     def train(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger.log')))
