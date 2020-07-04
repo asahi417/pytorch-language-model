@@ -364,6 +364,24 @@ class TransformerTokenClassification:
     #     prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
     #     return prediction
 
+    def test(self):
+        LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_test.log')))
+        writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
+        if self.dataset_split is None:
+            self.dataset_split = get_dataset(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
+        data_loader_test = {k: torch.utils.data.DataLoader(
+            Dataset(**v, transform_function=self.transforms),
+            num_workers=NUM_WORKER,
+            batch_size=self.args.batch_size)
+            for k, v in self.dataset_split.items() if k not in ['train', 'valid']}
+        LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
+        start_time = time()
+        for k, v in data_loader_test.items():
+            self.__epoch_valid(v, writer=writer, prefix=k)
+            self.release_cache()
+        writer.close()
+        LOGGER.info('[test completed, %0.2f sec in total]' % (time() - start_time))
+
     def train(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_train.log')))
         if self.dataset_split is None:
@@ -536,11 +554,10 @@ if __name__ == '__main__':
         weight_decay=opt.weight_decay,
         batch_size=opt.batch_size,
         max_seq_length=opt.max_seq_length,
-        inference_mode=opt.inference_mode,
         early_stop=opt.early_stop,
         fp16=opt.fp16
     )
-    if classifier.inference_mode:
+    if opt.inference_mode:
 
         predictions = classifier.predict(['I live in London', '東京は今日も暑いです'])
         print(predictions)
