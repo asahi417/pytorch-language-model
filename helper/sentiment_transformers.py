@@ -256,12 +256,13 @@ class TransformerSequenceClassification:
         self.__step = 0 if stats is None else stats['step']  # num of training step
         self.__epoch = 0 if stats is None else stats['epoch']  # num of epoch
         self.__best_val_score = None if stats is None else stats['best_val_score']
-        self.model.load_state_dict(stats['model_state_dict'])
 
         # apply checkpoint statistics to optimizer/scheduler
-        if stats is not None and self.optimizer is not None and self.scheduler is not None:
-            self.optimizer.load_state_dict(stats['optimizer_state_dict'])
-            self.scheduler.load_state_dict(stats['scheduler_state_dict'])
+        if stats is not None:
+            self.model.load_state_dict(stats['model_state_dict'])
+            if self.optimizer is not None and self.scheduler is not None:
+                self.optimizer.load_state_dict(stats['optimizer_state_dict'])
+                self.scheduler.load_state_dict(stats['scheduler_state_dict'])
 
         # GPU allocation
         self.n_gpu = torch.cuda.device_count()
