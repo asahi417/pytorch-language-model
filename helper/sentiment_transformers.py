@@ -308,18 +308,19 @@ class TransformerSequenceClassification:
         else:
             return None
 
-    # def predict(self, x: list):
-    #     """ model inference """
-    #     if self.label_to_id:
-    #     self.model.eval()
-    #     encode = self.transforms(x)
-    #     logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
-    #     _, _pred = torch.max(logit, dim=1)
-    #     _pred_list = _pred.cpu().tolist()
-    #     _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
-    #     prediction = [self.id_to_label[str(_p)] for _p in _pred_list]
-    #     prob = [dict([(self.id_to_label[str(i)], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
-    #     return prediction, prob
+    def predict(self, x: list):
+        """ model inference """
+        self.model.eval()
+        data_loader =torch.utils.data.DataLoader(
+            Dataset(x, transform_function=self.transforms), num_workers=NUM_WORKER, batch_size=len(x))
+        encode = self.transforms([x])
+        logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
+        _, _pred = torch.max(logit, dim=1)
+        _pred_list = _pred.cpu().tolist()
+        _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
+        prediction = [self.id_to_label[str(_p)] for _p in _pred_list]
+        prob = [dict([(self.id_to_label[str(i)], float(pr)) for i, pr in enumerate(_p)]) for _p in _prob_list]
+        return prediction, prob
 
     def test(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_test.log')))

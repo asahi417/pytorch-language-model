@@ -213,7 +213,7 @@ class Dataset(torch.utils.data.Dataset):
             assert len(y) == len(x)
             encode = self.transform_function(' '.join(x))
             fixed_label = list(chain(*[
-                [label] + [PAD_TOKEN_LABEL_ID] * (len(self.transform_function.tokenizer(word)) - 1)
+                [label] + [PAD_TOKEN_LABEL_ID] * (len(self.transform_function.tokenize(word)) - 1)
                 for label, word in zip(y, x)]))
             if encode['input_ids'][0] in self.transform_function.all_special_ids:
                 fixed_label = [PAD_TOKEN_LABEL_ID] + fixed_label
