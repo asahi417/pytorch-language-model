@@ -200,20 +200,18 @@ class Dataset(torch.utils.data.Dataset):
     def __init__(self, data: list, transform_function, label: list = None):
         self.data = data  # list of half-space split tokens
         self.transform_function = transform_function
-        self.label = self.fix_label(
-            label, data, transform_function, transform_function.tokenize, transform_function.all_special_ids)
+        self.label = self.fix_label(label)
 
-    @staticmethod
-    def fix_label(label, data, encoder, tokenizer, all_special_ids):
-        assert len(label) == len(data)
+    def fix_label(self, label):
+        assert len(label) == len(self.data)
         fixed_labels = []
-        for x, y in zip(label, data):
+        for y, x in zip(label, self.data):
             assert len(y) == len(x)
-            encode = encoder(' '.join(x))
+            encode = self.transform_function(' '.join(x))
             fixed_label = list(chain(*[
-                [label] + [PAD_TOKEN_LABEL_ID] * (len(tokenizer(word)) - 1)
+                [label] + [PAD_TOKEN_LABEL_ID] * (len(self.transform_function.tokenizer(word)) - 1)
                 for label, word in zip(y, x)]))
-            if encode['input_ids'][0] in all_special_ids:
+            if encode['input_ids'][0] in self.transform_function.all_special_ids:
                 fixed_label = [PAD_TOKEN_LABEL_ID] + fixed_label
             fixed_label += [PAD_TOKEN_LABEL_ID] * (len(encode['input_ids']) - len(fixed_label))
             fixed_labels.append(fixed_label)

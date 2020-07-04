@@ -350,7 +350,7 @@ class TransformerSequenceClassification:
             shuffle=k == 'train',
             drop_last=k == 'train')
             for k in ['train', 'valid']}
-        LOGGER.info('data_loader     : %s' % str(list(data_loader.keys())))
+        LOGGER.info('data_loader: %s' % str(list(data_loader.keys())))
         LOGGER.info('*** start training from step %i, epoch %i ***' % (self.__step, self.__epoch))
         try:
             with detect_anomaly():
