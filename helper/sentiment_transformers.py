@@ -210,6 +210,7 @@ class TransformerSequenceClassification:
             stats, self.label_to_id = ckpt_statistics
             self.dataset_split = None
         else:
+            stats = None
             self.dataset_split, self.label_to_id = get_dataset(self.args.dataset)
             with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
                 json.dump(self.label_to_id, f)
