@@ -1,12 +1,4 @@
-""" self-contained sentiment analysis model finetuning on hugginface.transformers (imdb/sst)
-
-- checkpoint managers: different ckpt id will be given to different configuration
-- dataset: sst/imdb dataset will be automatically fetched from source and compile as DataLoader
-- multiGPU support
-- command line interface for testing inference
-- see https://huggingface.co/transformers/_modules/transformers/optimization.html#AdamW for AdamW and linear scheduler
-"""
-
+""" self-contained sentiment analysis model finetuning on hugginface.transformers (imdb/sst) """
 import traceback
 import argparse
 import os
@@ -18,10 +10,8 @@ import shutil
 import transformers
 import torchtext
 import torch
-import numpy as np
 from time import time
 from torch import optim
-from torch import nn
 from torch.autograd import detect_anomaly
 from torch.utils.tensorboard import SummaryWriter
 from glob import glob
@@ -73,27 +63,6 @@ def get_dataset(data_name: str = 'sst', label_to_id: dict = None):
         data_split[name] = data
         LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data['data'])))
     return data_split, label_to_id
-
-
-class Dataset(torch.utils.data.Dataset):
-    """ torch.utils.data.Dataset with transformer tokenizer """
-
-    def __init__(self, data: list, transform_function, label: list = None):
-        self.data = data  # list of half-space split tokens
-        self.label = label if label is None else [int(l) for l in label]  # list of label sequence
-        self.transform_function = transform_function
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        encode = self.transform_function(self.data[idx])
-        if self.label is not None:
-            encode['labels'] = self.label[idx]
-        float_list = ['attention_mask']
-        encode = {k: torch.tensor(v, dtype=torch.float32) if k in float_list else torch.tensor(v, dtype=torch.long)
-                  for k, v in encode.items()}
-        return encode
 
 
 class Argument:
@@ -195,6 +164,27 @@ class Transforms:
         return self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
 
 
+class Dataset(torch.utils.data.Dataset):
+    """ torch.utils.data.Dataset with transformer tokenizer """
+
+    def __init__(self, data: list, transform_function, label: list = None):
+        self.data = data  # list of half-space split tokens
+        self.label = label if label is None else [int(l) for l in label]  # list of label sequence
+        self.transform_function = transform_function
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        encode = self.transform_function(self.data[idx])
+        if self.label is not None:
+            encode['labels'] = self.label[idx]
+        float_list = ['attention_mask']
+        encode = {k: torch.tensor(v, dtype=torch.float32) if k in float_list else torch.tensor(v, dtype=torch.long)
+                  for k, v in encode.items()}
+        return encode
+
+
 class TransformerSequenceClassification:
     """ finetune transformers on text classification """
 
@@ -263,14 +253,10 @@ class TransformerSequenceClassification:
                 raise ValueError('unknown scheduler: %s' % self.args.scheduler)
 
         # load checkpoint
-        self.__step = 0
-        self.__epoch = 0
-        self.__best_val_score = None
-        if stats is not None:
-            self.__step = stats['step']  # num of training step
-            self.__epoch = stats['epoch']  # num of epoch
-            self.__best_val_score = stats['best_val_score']
-            self.model.load_state_dict(stats['model_state_dict'])
+        self.__step = 0 if stats is None else stats['step']  # num of training step
+        self.__epoch = 0 if stats is None else stats['epoch']  # num of epoch
+        self.__best_val_score = None if stats is None else stats['best_val_score']
+        self.model.load_state_dict(stats['model_state_dict'])
 
         # apply checkpoint statistics to optimizer/scheduler
         if stats is not None and self.optimizer is not None and self.scheduler is not None:
@@ -324,9 +310,8 @@ class TransformerSequenceClassification:
     def predict(self, x: list):
         """ model inference """
         self.model.eval()
-        encode = self.tokenizer.batch_encode_plus(x)
-        encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
-        logit = self.model(**encode)[0]
+        encode = self.transforms(x)
+        logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
         _, _pred = torch.max(logit, dim=1)
         _pred_list = _pred.cpu().tolist()
         _prob_list = torch.nn.functional.softmax(logit, dim=1).cpu().tolist()
@@ -449,7 +434,7 @@ class TransformerSequenceClassification:
             list_accuracy.append(((pred == encode['labels']).cpu().float().mean()).item())
             list_loss.append(loss.cpu().item())
 
-        accuracy, loss = float(np.mean(list_accuracy)), float(np.mean(list_loss))
+        accuracy, loss = float(sum(list_accuracy)/len(list_accuracy)), float(sum(list_loss)/len(list_loss))
         LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
         self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
         self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
@@ -473,10 +458,10 @@ def get_options():
                         help='max sequence length (use same length as used in pre-training if not provided)',
                         default=128,
                         type=int)
-    parser.add_argument('-b', '--batch-size', help='batch size', default=16, type=int)
+    parser.add_argument('-b', '--batch-size', help='batch size', default=32, type=int)
     parser.add_argument('--random-seed', help='random seed', default=1234, type=int)
-    parser.add_argument('--lr', help='learning rate', default=2e-5, type=float)
-    parser.add_argument('--optimizer', help='optimizer', default='adam', type=str)
+    parser.add_argument('--lr', help='learning rate', default=1e-5, type=float)
+    parser.add_argument('--optimizer', help='optimizer', default='adamw', type=str)
     parser.add_argument('--scheduler', help='scheduler', default='linear', type=str)
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
     parser.add_argument('--batch-size-validation',
@@ -484,7 +469,7 @@ def get_options():
                         default=2,
                         type=int)
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
-    parser.add_argument('--weight-decay', help='weight decay', default=0.0, type=float)
+    parser.add_argument('--weight-decay', help='weight decay', default=1e-7, type=float)
     parser.add_argument('--early-stop', help='value of accuracy drop for early stop', default=0.1, type=float)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
     parser.add_argument('--fp16', help='fp16', action='store_true')
