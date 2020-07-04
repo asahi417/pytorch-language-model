@@ -334,13 +334,13 @@ class TransformerSequenceClassification:
             shuffle=k == 'train',
             drop_last=k == 'train')
             for k in ['train', 'valid']}
-        data_loader_test = {k: torch.utils.data.DataLoader(
-            Dataset(**v, transform_function=self.transforms),
-            num_workers=NUM_WORKER,
-            batch_size=self.batch_size_validation)
-            for k, v in self.dataset_split.items()}
+        # data_loader_test = {k: torch.utils.data.DataLoader(
+        #     Dataset(**v, transform_function=self.transforms),
+        #     num_workers=NUM_WORKER,
+        #     batch_size=self.batch_size_validation)
+        #     for k, v in self.dataset_split.items()}
         LOGGER.info('data_loader     : %s' % str(list(data_loader.keys())))
-        LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
+        # LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
         try:
             with detect_anomaly():
                 while True:
@@ -349,8 +349,8 @@ class TransformerSequenceClassification:
                     if if_training_finish or if_early_stop:
                         break
                     self.__epoch += 1
-                for k, v in data_loader.items():
-                    self.__epoch_valid(v, prefix=k)
+                # for k, v in data_loader.items():
+                #     self.__epoch_valid(v, prefix=k)
 
         except RuntimeError:
             LOGGER.info(traceback.format_exc())
@@ -437,9 +437,9 @@ class TransformerSequenceClassification:
 
         accuracy, loss = float(sum(list_accuracy)/len(list_accuracy)), float(sum(list_loss)/len(list_loss))
         LOGGER.info('[epoch %i] (%s) accuracy: %.3f, loss: %.3f' % (self.__epoch, prefix, accuracy, loss))
-        self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
-        self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
         if prefix == 'valid':
+            self.writer.add_scalar('%s/accuracy' % prefix, accuracy, self.__epoch)
+            self.writer.add_scalar('%s/loss' % prefix, loss, self.__epoch)
             if self.__best_val_score is None or accuracy > self.__best_val_score:
                 self.__best_val_score = accuracy
             if self.args.early_stop and self.__best_val_score - accuracy > self.args.early_stop:
@@ -467,7 +467,7 @@ def get_options():
     parser.add_argument('--total-step', help='total training step', default=13000, type=int)
     parser.add_argument('--batch-size-validation',
                         help='batch size for validation (smaller size to save memory)',
-                        default=2,
+                        default=1,
                         type=int)
     parser.add_argument('--warmup-step', help='warmup step (6 percent of total is recommended)', default=700, type=int)
     parser.add_argument('--weight-decay', help='weight decay', default=1e-7, type=float)
