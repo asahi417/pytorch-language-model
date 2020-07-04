@@ -106,81 +106,87 @@ def get_dataset(data_name: str = 'sst',
     return data_split, label_dictionary
 
 
-# class TokenEncoder:
-#     """ Token encoder with transformers tokenizer """
-#
-#     def __init__(self,
-#                  transformer: str,
-#                  max_seq_length: int = None):
-#         self.tokenizer = transformers.AutoTokenizer.from_pretrained(transformer, cache_dir=CACHE_DIR)
-#         if max_seq_length and max_seq_length > self.tokenizer.max_len:
-#             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
-#         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
-#         LOGGER.info('max_sequence_length: %i' % self.max_seq_length)
-#
-#     def __call__(self, text):
-#         # token_ids = self.tokenizer.encode(text)
-#         tokens_dict = self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
-#         token_ids = tokens_dict['input_ids']
-#         attention_mask = tokens_dict['attention_mask']
-#         return token_ids, attention_mask
+class TokenEncoder:
+    """ Token encoder with transformers tokenizer """
 
+    def __init__(self,
+                 transformer: str,
+                 max_seq_length: int = None):
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(transformer, cache_dir=CACHE_DIR)
+        if max_seq_length and max_seq_length > self.tokenizer.max_len:
+            raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
+        self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
+        LOGGER.info('max_sequence_length: %i' % self.max_seq_length)
 
-# class Dataset(torch.utils.data.Dataset):
-#     """ torch.utils.data.Dataset instance """
-#
-#     def __init__(self,
-#                  data: list,
-#                  token_encoder,
-#                  label: list=None):
-#         self.data = data
-#         if label is None:
-#             self.label = None
-#         else:
-#             self.label = [int(l) for l in label]
-#         self.token_encoder = token_encoder
-#
-#     def __len__(self):
-#         return len(self.data)
-#
-#     def __getitem__(self, idx):
-#         token_ids, attention_mask = self.token_encoder(self.data[idx])
-#         out_data = torch.tensor(token_ids, dtype=torch.long)
-#         attention_mask = torch.tensor(attention_mask, dtype=torch.float32)
-#         if self.label is None:
-#             return out_data, attention_mask
-#         else:
-#             out_label = torch.tensor(self.label[idx], dtype=torch.long)
-#             return out_data, attention_mask, out_label
+    def __call__(self, text):
+        # tokens_dict = self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
+        return self.tokenizer.encode_plus(text, max_length=self.max_seq_length, pad_to_max_length=True)
+        # token_ids = tokens_dict['input_ids']
+        # attention_mask = tokens_dict['attention_mask']
+        # return token_ids, attention_mask
 
 
 class Dataset(torch.utils.data.Dataset):
-    """ torch.utils.data.Dataset with transformer tokenizer """
+    """ torch.utils.data.Dataset instance """
 
-    def __init__(self, data: list, transformer_tokenizer,
-                 max_seq_length: int = None, label: list = None, pad_to_max_length: bool = True):
-        self.data = data  # list of half-space split tokens
+    def __init__(self,
+                 data: list,
+                 token_encoder,
+                 label: list=None):
+        self.data = data
         if label is None:
             self.label = None
         else:
             self.label = [int(l) for l in label]
-        self.pad_to_max_length = pad_to_max_length
-        self.tokenizer = transformer_tokenizer
-        if max_seq_length and max_seq_length > self.tokenizer.max_len:
-            raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
-        self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
+        self.token_encoder = token_encoder
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        encode = self.tokenizer.encode_plus(self.data[idx], max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
+        encode = self.token_encoder(self.data[idx])
         if self.label is not None:
             encode['labels'] = self.label[idx]
         float_list = ['attention_mask']
         encode = {k: torch.tensor(v, dtype=torch.float32) if k in float_list else torch.tensor(v, dtype=torch.long)
                   for k, v in encode.items()}
         return encode
+        # out_data = torch.tensor(token_ids, dtype=torch.long)
+        # attention_mask = torch.tensor(attention_mask, dtype=torch.float32)
+        # if self.label is None:
+        #     return out_data, attention_mask
+        # else:
+        #     out_label = torch.tensor(self.label[idx], dtype=torch.long)
+        #     return out_data, attention_mask, out_label
+
+
+# class Dataset(torch.utils.data.Dataset):
+#     """ torch.utils.data.Dataset with transformer tokenizer """
+#
+#     def __init__(self, data: list, transformer_tokenizer,
+#                  max_seq_length: int = None, label: list = None, pad_to_max_length: bool = True):
+#         self.data = data  # list of half-space split tokens
+#         if label is None:
+#             self.label = None
+#         else:
+#             self.label = [int(l) for l in label]
+#         self.pad_to_max_length = pad_to_max_length
+#         self.tokenizer = transformer_tokenizer
+#         if max_seq_length and max_seq_length > self.tokenizer.max_len:
+#             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
+#         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
+#
+#     def __len__(self):
+#         return len(self.data)
+#
+#     def __getitem__(self, idx):
+#         encode = self.tokenizer.encode_plus(self.data[idx], max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
+#         if self.label is not None:
+#             encode['labels'] = self.label[idx]
+#         float_list = ['attention_mask']
+#         encode = {k: torch.tensor(v, dtype=torch.float32) if k in float_list else torch.tensor(v, dtype=torch.long)
+#                   for k, v in encode.items()}
+#         return encode
 
 
 class ParameterManager:
@@ -311,8 +317,8 @@ class TransformerSequenceClassifier:
                 json.dump(label_dict, f)
         self.id_to_label = dict([(str(v), str(k)) for k, v in label_dict.items()])
 
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
-        # self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
+        # self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.param('transformer'), cache_dir=CACHE_DIR)
+        self.token_encoder = TokenEncoder(self.param('transformer'), self.param('max_seq_length'))
         self.config = transformers.AutoConfig.from_pretrained(
             self.param('transformer'),
             num_labels=len(self.id_to_label),
@@ -433,18 +439,19 @@ class TransformerSequenceClassifier:
         LOGGER.info('setup dataset')
         dataset_split, _ = get_dataset(self.param('dataset'))
         data_loader_train = torch.utils.data.DataLoader(
-            Dataset(dataset_split[0][0], label=dataset_split[0][1], transformer_tokenizer=self.tokenizer),
+            # Dataset(dataset_split[0][0], label=dataset_split[0][1], transformer_tokenizer=self.tokenizer),
+            Dataset(dataset_split[0][0], label=dataset_split[0][1], token_encoder=self.token_encoder),
             batch_size=self.param('batch_size'),
             shuffle=True,
             num_workers=NUM_WORKER,
             drop_last=True)
         data_loader_valid = torch.utils.data.DataLoader(
-            Dataset(dataset_split[1][0], label=dataset_split[1][1], transformer_tokenizer=self.tokenizer),
+            Dataset(dataset_split[1][0], label=dataset_split[1][1], token_encoder=self.token_encoder),
             batch_size=self.batch_size_validation,
             num_workers=NUM_WORKER)
         if len(dataset_split) > 2:
             data_loader_test = torch.utils.data.DataLoader(
-                Dataset(dataset_split[2][0], label=dataset_split[2][1], transformer_tokenizer=self.tokenizer),
+                Dataset(dataset_split[2][0], label=dataset_split[2][1], token_encoder=self.token_encoder),
                 batch_size=self.param('batch_size'))
         else:
             data_loader_test = None
@@ -454,11 +461,11 @@ class TransformerSequenceClassifier:
             with detect_anomaly():
                 while True:
 
-                    self.release_cache()
                     if_training_finish = self.__epoch_train(data_loader_train)
-
                     self.release_cache()
+
                     if_early_stop = self.__epoch_valid(data_loader_valid, prefix='valid')
+                    self.release_cache()
 
                     if if_training_finish or if_early_stop:
                         if data_loader_test:
