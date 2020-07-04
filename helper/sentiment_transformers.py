@@ -97,6 +97,9 @@ class Dataset(torch.utils.data.Dataset):
             ' '.join(self.data[idx]), max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
         if self.label is not None:
             encode['labels'] = self.label[idx]
+        float_list = ['attention_mask']
+        encode = {k: torch.tensor(v, dtype=torch.float32) if k in float_list else torch.tensor(v, dtype=torch.long)
+                  for k, v in encode.items()}
         return encode
 
 
@@ -405,7 +408,7 @@ class TransformerSequenceClassification:
         self.model.train()
         for i, encode in enumerate(data_loader, 1):
             # update model
-            encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
+            encode = {k: v.to(self.device) for k, v in encode.items()}
             self.optimizer.zero_grad()
             loss, logit = self.model(**encode)[0:2]
             if self.n_gpu > 1:
@@ -434,6 +437,7 @@ class TransformerSequenceClassification:
             if self.__step >= self.args.total_step:
                 LOGGER.info('reached maximum step')
                 return True
+        self.release_cache()
         return False
 
     def __epoch_valid(self, data_loader, prefix: str='valid'):
@@ -458,6 +462,7 @@ class TransformerSequenceClassification:
                 self.__best_val_score = accuracy
             if self.args.early_stop and self.__best_val_score - accuracy > self.args.early_stop:
                 return True
+        self.release_cache()
         return False
 
 
