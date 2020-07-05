@@ -207,6 +207,7 @@ class Dataset(torch.utils.data.Dataset):
         self.label = self.fix_label(label)
 
     def fix_label(self, label):
+        """ fix label for token label match """
         assert len(label) == len(self.data)
         fixed_labels = []
         for y, x in zip(label, self.data):
@@ -376,6 +377,7 @@ class TransformerTokenClassification:
             batch_size=self.args.batch_size)
             for k, v in self.dataset_split.items() if k not in ['train', 'valid']}
         LOGGER.info('data_loader_test: %s' % str(list(data_loader_test.keys())))
+        assert len(data_loader_test.keys()) != 0, 'no test set found'
         start_time = time()
         for k, v in data_loader_test.items():
             self.__epoch_valid(v, writer=writer, prefix=k)
@@ -578,5 +580,8 @@ if __name__ == '__main__':
         #         print(predictions)
 
     else:
-        classifier.train()
+        if opt.test:
+            classifier.test()
+        else:
+            classifier.train()
 
