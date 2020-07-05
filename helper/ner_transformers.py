@@ -366,7 +366,9 @@ class TransformerTokenClassification:
         prediction = []
         for encode in data_loader:
             logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
-            _, _pred = torch.max(logit, dim=1)
+            print(logit)
+            _, _pred = torch.max(logit, dim=-1)
+            print(_pred)
             prediction += [[self.id_to_label[_p] for _p in batch] for batch in _pred.cpu().tolist()]
         return prediction
 
