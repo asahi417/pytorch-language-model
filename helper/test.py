@@ -118,7 +118,7 @@ class Dataset(torch.utils.data.Dataset):
             if encode['input_ids'][0] in self.transform_function.all_special_ids:
                 fixed_label = [PAD_TOKEN_LABEL_ID] + fixed_label
             fixed_label += [PAD_TOKEN_LABEL_ID] * (len(encode['input_ids']) - len(fixed_label))
-            fixed_label = fixed_label[:self.transform_function.pad_to_max_length]
+            fixed_label = fixed_label[:self.transform_function.max_seq_length]
             fixed_labels.append(fixed_label)
         return fixed_labels
 
