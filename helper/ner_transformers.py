@@ -208,6 +208,8 @@ class Dataset(torch.utils.data.Dataset):
 
     def fix_label(self, label):
         """ fix label for token label match """
+        if label is None:
+            return None
         assert len(label) == len(self.data)
         fixed_labels = []
         for y, x in zip(label, self.data):
