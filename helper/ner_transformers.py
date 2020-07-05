@@ -366,9 +366,7 @@ class TransformerTokenClassification:
         prediction = []
         for encode in data_loader:
             logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
-            print(logit)
             _, _pred = torch.max(logit, dim=-1)
-            print(_pred)
             prediction += [[self.id_to_label[_p] for _p in batch] for batch in _pred.cpu().tolist()]
         return prediction
 
@@ -570,20 +568,20 @@ if __name__ == '__main__':
         early_stop=opt.early_stop,
         fp16=opt.fp16
     )
-    if opt.inference_mode:
+    if opt.test_sentence is not None:
+        # test_sentence = opt.test_sentence.split(',')
+        # predictions = classifier.predict(['I live in London', '東京は今日も暑いです'])
+        # print(predictions)
 
-        predictions = classifier.predict(['I live in London', '東京は今日も暑いです'])
-        print(predictions)
-
-        # while True:
-        #     _inp = input('input sentence >>>')
-        #     if _inp == 'q':
-        #         break
-        #     elif _inp == '':
-        #         continue
-        #     else:
-        #         predictions = classifier.predict([_inp])
-        #         print(predictions)
+        while True:
+            _inp = input('input sentence >>>')
+            if _inp == 'q':
+                break
+            elif _inp == '':
+                continue
+            else:
+                predictions = classifier.predict([_inp])
+                print(predictions)
 
     else:
         if opt.test:
