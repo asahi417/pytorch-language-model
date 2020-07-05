@@ -356,15 +356,17 @@ class TransformerTokenClassification:
         else:
             return None
 
-    # def predict(self, x: list):
-    #     """ model inference """
-    #     self.model.eval()
-    #     encode = self.transforms(x)
-    #     encode = {k: torch.tensor(v, dtype=torch.long).to(self.device) for k, v in encode.items()}
-    #     logit = self.model(**encode)[0]
-    #     pred = torch.max(logit, 2)[1].cpu().detach().int().tolist()
-    #     prediction = [[self.id_to_label[_p] for _p in batch] for batch in pred]
-    #     return prediction
+    def predict(self, x: list):
+        """ model inference """
+        self.model.eval()
+        data_loader = torch.utils.data.DataLoader(
+            Dataset(x, transform_function=self.transforms), num_workers=NUM_WORKER, batch_size=len(x))
+        prediction = []
+        for encode in data_loader:
+            logit = self.model(**{k: v.to(self.device) for k, v in encode.items()})[0]
+            _, _pred = torch.max(logit, dim=1)
+            prediction += [[self.id_to_label[_p] for _p in batch] for batch in _pred.cpu().tolist()]
+        return prediction
 
     def test(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_test.log')))
