@@ -218,6 +218,7 @@ class Dataset(torch.utils.data.Dataset):
             if encode['input_ids'][0] in self.transform_function.all_special_ids:
                 fixed_label = [PAD_TOKEN_LABEL_ID] + fixed_label
             fixed_label += [PAD_TOKEN_LABEL_ID] * (len(encode['input_ids']) - len(fixed_label))
+            fixed_label = fixed_label[:self.transform_function.pad_to_max_length]
             fixed_labels.append(fixed_label)
         return fixed_labels
 
@@ -537,6 +538,7 @@ def get_options():
     parser.add_argument('--weight-decay', help='weight decay', default=1e-7, type=float)
     parser.add_argument('--early-stop', help='value of accuracy drop for early stop', default=0.1, type=float)
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
+    parser.add_argument('--test', help='run over testdataset', action='store_true')
     parser.add_argument('--fp16', help='fp16', action='store_true')
     return parser.parse_args()
 
