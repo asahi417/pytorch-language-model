@@ -34,6 +34,32 @@ CKPT_DIR = os.getenv("CKPT_DIR", './ckpt')
 PAD_TOKEN_LABEL_ID = nn.CrossEntropyLoss().ignore_index
 
 
+def split(data, label, export_path, label_to_id):
+    assert len(data) == len(label)
+    os.makedirs(export_path, exist_ok=True)
+    id_to_label = {v: k for k, v in label_to_id.items()}
+    train_n = int(len(data) * 0.7)
+    valid_n = int(len(data) * 0.2)
+
+    with open(os.path.join(export_path, 'train.txt'), 'w') as f:
+        for x, y in zip(data[:train_n], label[:train_n]):
+            for _x, _y in zip(x, y):
+                f.write("{} {}\n".format(_x, id_to_label[_y]))
+            f.write('\n')
+
+    with open(os.path.join(export_path, 'valid.txt'), 'w') as f:
+        for x, y in zip(data[train_n:train_n + valid_n], label[train_n:train_n + valid_n]):
+            for _x, _y in zip(x, y):
+                f.write("{} {}\n".format(_x, id_to_label[_y]))
+            f.write('\n')
+
+    with open(os.path.join(export_path, 'test.txt'), 'w') as f:
+        for x, y in zip(data[train_n + valid_n:], label[train_n + valid_n:]):
+            for _x, _y in zip(x, y):
+                f.write("{} {}\n".format(_x, id_to_label[_y]))
+            f.write('\n')
+
+
 def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None, allow_update: bool=True):
     """ download dataset file and return dictionary including training/validation split """
     label_to_id = dict() if label_to_id is None else label_to_id
@@ -53,6 +79,8 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None, allow_upda
                         sentence, entity = [], []
                 else:
                     ls = line.split()
+                    if len(ls) < 2:
+                        continue
                     sentence.append(ls[0])
                     # Examples could have no label for mode = "test"
                     tag = 'O' if len(ls) < 2 else ls[-1]
@@ -66,16 +94,29 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None, allow_upda
         if not os.path.exists(data_path):
             os.makedirs(data_path, exist_ok=True)
             os.system('git clone https://github.com/mohammadKhalifa/xlm-roberta-ner')
-            os.system('mv ./xlm-roberta-ner/data/coNLL-2003/* %s/' % data_path)
+            os.system('mv ./xlm-roberta-ner/data/coNLL-2003/* {}/'.format(data_path))
             os.system('rm -rf ./xlm-roberta-ner')
         files = ['train.txt', 'valid.txt', 'test.txt']
     elif data_name == 'wnut_17':
         if not os.path.exists(data_path):
             os.makedirs(data_path, exist_ok=True)
-            os.system("curl -L 'https://github.com/leondz/emerging_entities_17/raw/master/wnut17train.conll'  | tr '\t' ' ' > %s/train.txt.tmp" % data_path)
-            os.system("curl -L 'https://github.com/leondz/emerging_entities_17/raw/master/emerging.dev.conll' | tr '\t' ' ' > %s/dev.txt.tmp" % data_path)
-            os.system("curl -L 'https://raw.githubusercontent.com/leondz/emerging_entities_17/master/emerging.test.annotated' | tr '\t' ' ' > %s/test.txt.tmp" % data_path)
+            os.system("curl -L 'https://github.com/leondz/emerging_entities_17/raw/master/wnut17train.conll'  | tr '\t' ' ' > {}/train.txt.tmp".format(data_path))
+            os.system("curl -L 'https://github.com/leondz/emerging_entities_17/raw/master/emerging.dev.conll' | tr '\t' ' ' > {}/dev.txt.tmp".format(data_path))
+            os.system("curl -L 'https://raw.githubusercontent.com/leondz/emerging_entities_17/master/emerging.test.annotated' | tr '\t' ' ' > {}/test.txt.tmp".format(data_path))
         files = ['train.txt.tmp', 'dev.txt.tmp', 'test.txt.tmp']
+    elif data_name in ['wiki-ja-500', 'wiki-news-ja-1000']:
+        if not os.path.exists(data_path):
+            os.makedirs(data_path, exist_ok=True)
+            os.system('git clone https://github.com/Hironsan/IOB2Corpus')
+            if data_name == 'wiki-ja-500':
+                os.system('mv ./IOB2Corpus/hironsan.txt {}/tmp.txt'.format(data_path))
+            else:
+                os.system('mv ./IOB2Corpus/ja.wikipedia.conll {}/tmp.txt'.format(data_path))
+            os.system('rm -rf ./IOB2Corpus')
+            label_to_id, data = decode_file('tmp.txt', dict())
+            split(data['data'], data['label'], data_path, label_to_id)
+            os.system('rm -rf {}/tmp.txt'.format(data_path))
+        files = ['train.txt', 'valid.txt', 'test.txt']
     else:
         raise ValueError('unknown dataset: %s' % data_name)
 
@@ -83,7 +124,7 @@ def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None, allow_upda
     for name, filepath in zip(['train', 'valid', 'test'], files):
         label_to_id, data_dict = decode_file(filepath, _label_to_id=label_to_id)
         data_split[name] = data_dict
-        LOGGER.info('dataset %s/%s: %i entries' % (data_name, filepath, len(data_dict['data'])))
+        LOGGER.info('dataset {}/{}: {} entries'.format(data_name, filepath, len(data_dict['data'])))
     if allow_update:
         return data_split, label_to_id
     else:
@@ -179,20 +220,113 @@ class Argument:
 class Transforms:
     """ Text encoder with transformers tokenizer """
 
-    def __init__(self, transformer_tokenizer: str, max_seq_length: int = None, pad_to_max_length: bool = True):
+    def __init__(self,
+                 transformer_tokenizer: str,
+                 max_seq_length: int = None,
+                 pad_to_max_length: bool = True,
+                 language: str = 'en'):
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(transformer_tokenizer, cache_dir=CACHE_DIR)
         if max_seq_length and max_seq_length > self.tokenizer.max_len:
             raise ValueError('`max_seq_length should be less than %i' % self.tokenizer.max_len)
         self.max_seq_length = max_seq_length if max_seq_length else self.tokenizer.max_len
         self.pad_to_max_length = pad_to_max_length
+        self.language = language
+        self.pad_ids = {"labels": PAD_TOKEN_LABEL_ID, "input_ids": self.tokenizer.pad_token_id, "__default__": 0}
+        # find tokenizer-depend prefix
+        sentence_go_around = ''.join(self.tokenizer.tokenize('get tokenizer specific prefix'))
+        self.prefix = sentence_go_around[:list(re.finditer('get', sentence_go_around))[0].span()[0]]
+        # find special tokens to be added
+        self.sp_token_start, self.sp_token_end = self.get_add_token()
 
-    def __call__(self, text: str):
-        return self.tokenizer.encode_plus(
-            text, max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length)
+    def get_add_token(self):
+        encode_first = self.tokenizer.encode_plus('test')
+        inner_token_ids = []
+        sp_token_start = {k: [] for k in encode_first.keys()}
+        sp_token_end = {k: [] for k in encode_first.keys()}
+        for n, i in enumerate(encode_first['input_ids']):
+            if i in self.tokenizer.all_special_ids:
+                for k, v in encode_first.items():
+                    if len(inner_token_ids) == 0:
+                        sp_token_start[k] += [v[n]]
+                    else:
+                        sp_token_end[k] += [v[n]]
+            else:
+                inner_token_ids += [i]
+        sp_token_end['labels'] = [self.pad_ids['labels']] * len(sp_token_end['input_ids'])
+        sp_token_start['labels'] = [self.pad_ids['labels']] * len(sp_token_start['input_ids'])
+        return sp_token_start, sp_token_end
+
+    def fixed_encode_en(self, tokens, labels: list = None):
+        """ fixed encoding for language with halfspace in between words """
+        encode = self.tokenizer.encode_plus(
+            ' '.join(tokens), max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length, truncation=self.pad_to_max_length)
+        if labels:
+            assert len(tokens) == len(labels)
+            fixed_labels = list(chain(*[
+                [label] + [self.pad_ids['labels']] * (len(self.tokenizer.tokenize(word)) - 1)
+                for label, word in zip(labels, tokens)]))
+            fixed_labels = [self.pad_ids['labels']] * len(self.sp_token_start['labels']) + fixed_labels
+            fixed_labels = fixed_labels[:min(len(fixed_labels), self.max_seq_length - len(self.sp_token_end['labels']))]
+            fixed_labels = fixed_labels + [self.pad_ids['labels']] * (self.max_seq_length - len(fixed_labels))
+            encode['labels'] = fixed_labels
+        return encode
+
+    def fixed_encode_ja(self, tokens, labels: list = None, dummy: str = '@'):
+        """ fixed encoding for language without halfspace in between words """
+        # get special tokens at start/end of sentence based on first token
+        encode_all = self.tokenizer.batch_encode_plus(tokens)
+        # token_ids without prefix/special tokens
+        # `wifi` will be treated as `_wifi` and change the tokenize result, so add dummy on top of the sentence to fix
+        token_ids_all = [[self.tokenizer.convert_tokens_to_ids(_t.replace(self.prefix, '').replace(dummy, ''))
+                          for _t in self.tokenizer.tokenize(dummy+t)
+                          if len(_t.replace(self.prefix, '').replace(dummy, '')) > 0]
+                         for t in tokens]
+
+        for n in range(len(tokens)):
+            if n == 0:
+                encode = {k: v[n][:-len(self.sp_token_end[k])] for k, v in encode_all.items()}
+                if labels:
+                    encode['labels'] = [self.pad_ids['labels']] * len(self.sp_token_start['labels']) + [labels[n]]
+                    encode['labels'] += [self.pad_ids['labels']] * (len(encode['input_ids']) - len(encode['labels']))
+            else:
+                encode['input_ids'] += token_ids_all[n]
+                # other attribution without prefix/special tokens
+                tmp_encode = {k: v[n] for k, v in encode_all.items()}
+                input_ids_with_prefix = \
+                    tmp_encode.pop('input_ids')[len(self.sp_token_start['input_ids']):-len(self.sp_token_end['input_ids'])]
+                prefix_length = len(input_ids_with_prefix) - len(token_ids_all[n])
+                for k, v in tmp_encode.items():
+                    encode[k] += v[len(self.sp_token_start['input_ids']) + prefix_length:-len(self.sp_token_end['input_ids'])]
+                if labels:
+                    encode['labels'] += [labels[n]] + [self.pad_ids['labels']] * (len((token_ids_all[n])) - 1)
+
+        # add special token at the end and padding/truncate accordingly
+        for k in encode.keys():
+            encode[k] = encode[k][:min(len(encode[k]), self.max_seq_length - len(self.sp_token_end[k]))]
+            encode[k] += self.sp_token_end[k]
+            pad_id = self.pad_ids[k] if k in self.pad_ids.keys() else self.pad_ids['__default__']
+            encode[k] += [pad_id] * (self.max_seq_length - len(encode[k]))
+        return encode
+
+    def __call__(self, text, labels: list = None):
+        if type(text) is str:
+            return self.tokenizer.encode_plus(
+                text, max_length=self.max_seq_length, pad_to_max_length=self.pad_to_max_length, truncation=self.pad_to_max_length)
+        elif type(text) is list:
+            if self.language == 'en':
+                return self.fixed_encode_en(text, labels)
+            elif self.language == 'ja':
+                return self.fixed_encode_ja(text, labels)
+            else:
+                raise ValueError('unknown language: {}'.format(self.language))
 
     @property
     def all_special_ids(self):
         return self.tokenizer.all_special_ids
+
+    @property
+    def all_special_tokens(self):
+        return self.tokenizer.all_special_tokens
 
     def tokenize(self, *args, **kwargs):
         return self.tokenizer.tokenize(*args, **kwargs)
@@ -204,34 +338,13 @@ class Dataset(torch.utils.data.Dataset):
     def __init__(self, data: list, transform_function, label: list = None):
         self.data = data  # list of half-space split tokens
         self.transform_function = transform_function
-        self.label = self.fix_label(label)
-
-    def fix_label(self, label):
-        """ fix label for token label match """
-        if label is None:
-            return None
-        assert len(label) == len(self.data)
-        fixed_labels = []
-        for y, x in zip(label, self.data):
-            assert len(y) == len(x)
-            encode = self.transform_function(' '.join(x))
-            fixed_label = list(chain(*[
-                [label] + [PAD_TOKEN_LABEL_ID] * (len(self.transform_function.tokenize(word)) - 1)
-                for label, word in zip(y, x)]))
-            if encode['input_ids'][0] in self.transform_function.all_special_ids:
-                fixed_label = [PAD_TOKEN_LABEL_ID] + fixed_label
-            fixed_label += [PAD_TOKEN_LABEL_ID] * (len(encode['input_ids']) - len(fixed_label))
-            fixed_label = fixed_label[:self.transform_function.max_seq_length]
-            fixed_labels.append(fixed_label)
-        return fixed_labels
+        self.label = label if label else [None] * len(self.data)
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        encode = self.transform_function(' '.join(self.data[idx]))
-        if self.label is not None:
-            encode['labels'] = self.label[idx]
+        encode = self.transform_function(self.data[idx], self.label[idx])
         float_list = ['attention_mask']
         encode = {k: torch.tensor(v, dtype=torch.float32) if k in float_list else torch.tensor(v, dtype=torch.long)
                   for k, v in encode.items()}
@@ -276,7 +389,7 @@ class TransformerTokenClassification:
                 label2id=self.label_to_id,
                 cache_dir=CACHE_DIR)
         )
-        self.transforms = Transforms(self.args.transformer, self.args.max_seq_length)
+        self.transforms = Transforms(self.args.transformer, self.args.max_seq_length, language=self.args.language)
 
         # optimizer
         if self.args.optimizer == 'adamw':
@@ -546,6 +659,7 @@ def get_options():
     parser.add_argument('--inference-mode', help='inference mode', action='store_true')
     parser.add_argument('--test', help='run over testdataset', action='store_true')
     parser.add_argument('--fp16', help='fp16', action='store_true')
+    parser.add_argument('-l', '--language', help='language', default='en', type=str)
     return parser.parse_args()
 
 
@@ -566,7 +680,8 @@ if __name__ == '__main__':
         batch_size=opt.batch_size,
         max_seq_length=opt.max_seq_length,
         early_stop=opt.early_stop,
-        fp16=opt.fp16
+        fp16=opt.fp16,
+        language=opt.language
     )
     if opt.test_sentence is not None:
         # test_sentence = opt.test_sentence.split(',')
