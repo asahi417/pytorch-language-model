@@ -18,19 +18,19 @@ pip install -r requirement.txt
 
 | model | tokenizer      |  perplexity (valid) | perplexity (test)  | parameter |
 | ----- |:---------------|:-------------------:|:------------------:|:---------:|
-| LSTM  | SentencePieace | 60.84               | 55.66              | [toml file](./parameters/PennTreebank/SentencePieceBPETokenizer/lstm.toml) | 
+| LSTM  | SentencePieace | 60.84               | 55.66              | [toml file](../parameters/PennTreebank/SentencePieceBPETokenizer/lstm.toml) | 
 
 - WikiText103
 
 | model | tokenizer      |  perplexity (valid) | perplexity (test)  | parameter |
 | ----- |:---------------|:-------------------:|:------------------:|:---------:|
-| LSTM  | SentencePieace | 39.40               | 39.53              | [toml file](./parameters/WikiText103/SentencePieceBPETokenizer/lstm.toml) | 
+| LSTM  | SentencePieace | 39.40               | 39.53              | [toml file](../parameters/WikiText103/SentencePieceBPETokenizer/lstm.toml) | 
 
 - enwiki8
 
 | model | tokenizer      |  bpc (valid) | bpc (test)  | parameter |
 | ----- |:---------------|:------------:|:-----------:|:---------:|
-| LSTM  | Whitespace     | 1.71         | 1.702       | [toml file](./parameters/enwiki8/WhitespaceTokenizer/lstm.toml) | 
+| LSTM  | Whitespace     | 1.71         | 1.702       | [toml file](../parameters/enwiki8/WhitespaceTokenizer/lstm.toml) | 
 
 
 ## Forthcoming...

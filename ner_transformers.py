@@ -1,24 +1,25 @@
-""" self-contained NER finetuning on hugginface.transformers (conll_2003/wnut_17) """
+""" self-contained NER finetuning on hugginface.transformers """
 
-import traceback
 import argparse
 import os
 import random
-import hashlib
 import json
 import logging
-import shutil
+import re
+from time import time
+from logging.config import dictConfig
+from itertools import chain
+
 import transformers
 import torch
-from time import time
 from torch import optim
 from torch import nn
 from torch.autograd import detect_anomaly
 from torch.utils.tensorboard import SummaryWriter
-from glob import glob
-from logging.config import dictConfig
-from itertools import chain
 from seqeval.metrics import f1_score, precision_score, recall_score, classification_report, accuracy_score
+
+from get_dataset import get_dataset_ner
+from checkpoint_versioning import Argument
 
 
 dictConfig({
@@ -32,189 +33,6 @@ PROGRESS_INTERVAL = int(os.getenv("PROGRESS_INTERVAL", '100'))
 CACHE_DIR = os.getenv("CACHE_DIR", './cache')
 CKPT_DIR = os.getenv("CKPT_DIR", './ckpt')
 PAD_TOKEN_LABEL_ID = nn.CrossEntropyLoss().ignore_index
-
-
-def split(data, label, export_path, label_to_id):
-    assert len(data) == len(label)
-    os.makedirs(export_path, exist_ok=True)
-    id_to_label = {v: k for k, v in label_to_id.items()}
-    train_n = int(len(data) * 0.7)
-    valid_n = int(len(data) * 0.2)
-
-    with open(os.path.join(export_path, 'train.txt'), 'w') as f:
-        for x, y in zip(data[:train_n], label[:train_n]):
-            for _x, _y in zip(x, y):
-                f.write("{} {}\n".format(_x, id_to_label[_y]))
-            f.write('\n')
-
-    with open(os.path.join(export_path, 'valid.txt'), 'w') as f:
-        for x, y in zip(data[train_n:train_n + valid_n], label[train_n:train_n + valid_n]):
-            for _x, _y in zip(x, y):
-                f.write("{} {}\n".format(_x, id_to_label[_y]))
-            f.write('\n')
-
-    with open(os.path.join(export_path, 'test.txt'), 'w') as f:
-        for x, y in zip(data[train_n + valid_n:], label[train_n + valid_n:]):
-            for _x, _y in zip(x, y):
-                f.write("{} {}\n".format(_x, id_to_label[_y]))
-            f.write('\n')
-
-
-def get_dataset(data_name: str = 'wnut_17', label_to_id: dict = None, allow_update: bool=True):
-    """ download dataset file and return dictionary including training/validation split """
-    label_to_id = dict() if label_to_id is None else label_to_id
-    data_path = os.path.join(CACHE_DIR, data_name)
-
-    def decode_file(file_name, _label_to_id: dict):
-        inputs, labels = [], []
-        with open(os.path.join(data_path, file_name), 'r') as f:
-            sentence, entity = [], []
-            for n, line in enumerate(f):
-                line = line.strip()
-                if len(line) == 0 or line.startswith("-DOCSTART-"):
-                    if len(sentence) != 0:
-                        assert len(sentence) == len(entity)
-                        inputs.append(sentence)
-                        labels.append(entity)
-                        sentence, entity = [], []
-                else:
-                    ls = line.split()
-                    if len(ls) < 2:
-                        continue
-                    sentence.append(ls[0])
-                    # Examples could have no label for mode = "test"
-                    tag = 'O' if len(ls) < 2 else ls[-1]
-                    if tag not in _label_to_id.keys():
-                        assert allow_update
-                        _label_to_id[tag] = len(_label_to_id)
-                    entity.append(_label_to_id[tag])
-        return _label_to_id, {"data": inputs, "label": labels}
-
-    if data_name == 'conll_2003':
-        if not os.path.exists(data_path):
-            os.makedirs(data_path, exist_ok=True)
-            os.system('git clone https://github.com/mohammadKhalifa/xlm-roberta-ner')
-            os.system('mv ./xlm-roberta-ner/data/coNLL-2003/* {}/'.format(data_path))
-            os.system('rm -rf ./xlm-roberta-ner')
-        files = ['train.txt', 'valid.txt', 'test.txt']
-    elif data_name == 'wnut_17':
-        if not os.path.exists(data_path):
-            os.makedirs(data_path, exist_ok=True)
-            os.system("curl -L 'https://github.com/leondz/emerging_entities_17/raw/master/wnut17train.conll'  | tr '\t' ' ' > {}/train.txt.tmp".format(data_path))
-            os.system("curl -L 'https://github.com/leondz/emerging_entities_17/raw/master/emerging.dev.conll' | tr '\t' ' ' > {}/dev.txt.tmp".format(data_path))
-            os.system("curl -L 'https://raw.githubusercontent.com/leondz/emerging_entities_17/master/emerging.test.annotated' | tr '\t' ' ' > {}/test.txt.tmp".format(data_path))
-        files = ['train.txt.tmp', 'dev.txt.tmp', 'test.txt.tmp']
-    elif data_name in ['wiki-ja-500', 'wiki-news-ja-1000']:
-        if not os.path.exists(data_path):
-            os.makedirs(data_path, exist_ok=True)
-            os.system('git clone https://github.com/Hironsan/IOB2Corpus')
-            if data_name == 'wiki-ja-500':
-                os.system('mv ./IOB2Corpus/hironsan.txt {}/tmp.txt'.format(data_path))
-            else:
-                os.system('mv ./IOB2Corpus/ja.wikipedia.conll {}/tmp.txt'.format(data_path))
-            os.system('rm -rf ./IOB2Corpus')
-            label_to_id, data = decode_file('tmp.txt', dict())
-            split(data['data'], data['label'], data_path, label_to_id)
-            os.system('rm -rf {}/tmp.txt'.format(data_path))
-        files = ['train.txt', 'valid.txt', 'test.txt']
-    else:
-        raise ValueError('unknown dataset: %s' % data_name)
-
-    data_split = dict()
-    for name, filepath in zip(['train', 'valid', 'test'], files):
-        label_to_id, data_dict = decode_file(filepath, _label_to_id=label_to_id)
-        data_split[name] = data_dict
-        LOGGER.info('dataset {}/{}: {} entries'.format(data_name, filepath, len(data_dict['data'])))
-    if allow_update:
-        return data_split, label_to_id
-    else:
-        return data_split
-
-
-class Argument:
-    """ Model training arguments manager """
-
-    def __init__(self, prefix: str = None, checkpoint: str = None, **kwargs):
-        """  Model training arguments manager
-
-         Parameter
-        -------------------
-        prefix: prefix to filename
-        checkpoint: existing checkpoint name if you want to load
-        kwargs: model arguments
-        """
-        self.checkpoint_dir, self.parameter = self.__version(kwargs, checkpoint, prefix)
-        LOGGER.info('checkpoint: %s' % self.checkpoint_dir)
-        for k, v in self.parameter.items():
-            LOGGER.info(' - [arg] %s: %s' % (k, str(v)))
-        self.__dict__.update(self.parameter)
-
-    def remove_ckpt(self):
-        shutil.rmtree(self.checkpoint_dir)
-
-    @staticmethod
-    def md5(file_name):
-        """ get MD5 checksum """
-        hash_md5 = hashlib.md5()
-        with open(file_name, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_md5.update(chunk)
-        return hash_md5.hexdigest()
-
-    def __version(self, parameter: dict = None, checkpoint: str = None, prefix: str = None):
-        """ Checkpoint version
-
-         Parameter
-        ---------------------
-        parameter: parameter configuration to find same setting checkpoint
-        checkpoint: existing checkpoint to be loaded
-
-         Return
-        --------------------
-        path_to_checkpoint: path to new checkpoint dir
-        parameter: parameter
-        """
-
-        if checkpoint is None and parameter is None:
-            raise ValueError('either of `checkpoint` or `parameter` is needed.')
-
-        if checkpoint is None:
-            LOGGER.info('issue new checkpoint id')
-            # check if there are any checkpoints with same hyperparameters
-            version_name = []
-            for parameter_path in glob(os.path.join(CKPT_DIR, '*/parameter.json')):
-                _dir = parameter_path.replace('/parameter.json', '')
-                _dict = json.load(open(parameter_path))
-                version_name.append(_dir.split('/')[-1])
-                if parameter == _dict:
-                    inp = input('found a checkpoint with same configuration\n'
-                                'enter to delete the existing checkpoint %s\n'
-                                'or exit by type anything but not empty' % _dir)
-                    if inp == '':
-                        shutil.rmtree(_dir)
-                    else:
-                        exit()
-
-            with open(os.path.join(CKPT_DIR, 'tmp.json'), 'w') as _f:
-                json.dump(parameter, _f)
-            new_checkpoint = self.md5(os.path.join(CKPT_DIR, 'tmp.json'))
-            new_checkpoint = '_'.join([prefix, new_checkpoint]) if prefix else new_checkpoint
-            new_checkpoint_dir = os.path.join(CKPT_DIR, new_checkpoint)
-            os.makedirs(new_checkpoint_dir, exist_ok=True)
-            shutil.move(os.path.join(CKPT_DIR, 'tmp.json'), os.path.join(new_checkpoint_dir, 'parameter.json'))
-            return new_checkpoint_dir, parameter
-
-        else:
-            LOGGER.info('load existing checkpoint')
-            checkpoints = glob(os.path.join(CKPT_DIR, checkpoint, 'parameter.json'))
-            if len(checkpoints) >= 2:
-                raise ValueError('Checkpoints are duplicated: %s' % str(checkpoints))
-            elif len(checkpoints) == 0:
-                raise ValueError('No checkpoint: %s' % os.path.join(CKPT_DIR, checkpoint))
-            else:
-                parameter = json.load(open(checkpoints[0]))
-                target_checkpoints_path = checkpoints[0].replace('/parameter.json', '')
-                return target_checkpoints_path, parameter
 
 
 class Transforms:
@@ -375,7 +193,7 @@ class TransformerTokenClassification:
             self.dataset_split = None
         else:
             stats = None
-            self.dataset_split, self.label_to_id = get_dataset(self.args.dataset)
+            self.dataset_split, self.label_to_id = get_dataset_ner(self.args.dataset)
             with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
                 json.dump(self.label_to_id, f)
         self.id_to_label = {v: str(k) for k, v in self.label_to_id.items()}
@@ -487,7 +305,7 @@ class TransformerTokenClassification:
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_test.log')))
         writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         if self.dataset_split is None:
-            self.dataset_split = get_dataset(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
+            self.dataset_split = get_dataset_ner(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
         data_loader_test = {k: torch.utils.data.DataLoader(
             Dataset(**v, transform_function=self.transforms),
             num_workers=NUM_WORKER,
@@ -505,7 +323,7 @@ class TransformerTokenClassification:
     def train(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_train.log')))
         if self.dataset_split is None:
-            self.dataset_split = get_dataset(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
+            self.dataset_split = get_dataset_ner(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
         writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         start_time = time()
         data_loader = {k: torch.utils.data.DataLoader(
@@ -528,8 +346,7 @@ class TransformerTokenClassification:
                         break
                     self.__epoch += 1
         except RuntimeError:
-            LOGGER.info(traceback.format_exc())
-            LOGGER.info('*** RuntimeError (NaN found, see above log in detail) ***')
+            LOGGER.exception('*** RuntimeError (NaN found, see above log in detail) ***')
 
         except KeyboardInterrupt:
             LOGGER.info('*** KeyboardInterrupt ***')

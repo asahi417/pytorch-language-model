@@ -1,21 +1,21 @@
 """ self-contained sentiment analysis model finetuning on hugginface.transformers (imdb/sst) """
-import traceback
 import argparse
 import os
 import random
-import hashlib
 import json
 import logging
-import shutil
-import transformers
-import torchtext
-import torch
+from logging.config import dictConfig
 from time import time
+
+import transformers
+import torch
 from torch import optim
 from torch.autograd import detect_anomaly
 from torch.utils.tensorboard import SummaryWriter
-from glob import glob
-from logging.config import dictConfig
+
+from get_dataset import get_dataset_sentiment
+from checkpoint_versioning import Argument
+
 
 dictConfig({
     "version": 1,
@@ -27,132 +27,6 @@ NUM_WORKER = int(os.getenv("NUM_WORKER", '4'))
 PROGRESS_INTERVAL = int(os.getenv("PROGRESS_INTERVAL", '100'))
 CACHE_DIR = os.getenv("CACHE_DIR", './cache')
 CKPT_DIR = os.getenv("CKPT_DIR", './ckpt')
-
-
-def get_dataset(data_name: str = 'sst', label_to_id: dict = None, allow_update: bool=True):
-    """ download dataset file and return dictionary including training/validation split """
-    label_to_id = dict() if label_to_id is None else label_to_id
-
-    def decode_data(iterator, _label_to_id: dict):
-        list_text = []
-        list_label = []
-        for i in iterator:
-            if data_name == 'sst' and i.label == 'neutral':
-                continue
-            list_text.append(' '.join(i.text))
-            list_label.append(i.label)
-
-        for unique_label in list(set(list_label)):
-            if unique_label not in _label_to_id.keys():
-                assert allow_update
-                _label_to_id[unique_label] = len(_label_to_id)
-        list_label = [int(_label_to_id[l]) for l in list_label]
-        assert len(list_label) == len(list_text)
-        return _label_to_id, {"data": list_text, "label": list_label}
-
-    data_field, label_field = torchtext.data.Field(sequential=True), torchtext.data.Field(sequential=False)
-    if data_name == 'imdb':
-        iterator_split = torchtext.datasets.IMDB.splits(data_field, root=CACHE_DIR, label_field=label_field)
-    elif data_name == 'sst':
-        iterator_split = torchtext.datasets.SST.splits(data_field, root=CACHE_DIR, label_field=label_field)
-    else:
-        raise ValueError('unknown dataset: %s' % data_name)
-
-    data_split, data = dict(), None
-    for name, it in zip(['train', 'valid', 'test'], iterator_split):
-        label_to_id, data = decode_data(it, _label_to_id=label_to_id)
-        data_split[name] = data
-        LOGGER.info('dataset %s/%s: %i' % (data_name, name, len(data['data'])))
-    if allow_update:
-        return data_split, label_to_id
-    else:
-        return data_split
-
-
-class Argument:
-    """ Model training arguments manager """
-
-    def __init__(self, prefix: str = None, checkpoint: str = None, **kwargs):
-        """  Model training arguments manager
-
-         Parameter
-        -------------------
-        prefix: prefix to filename
-        checkpoint: existing checkpoint name if you want to load
-        kwargs: model arguments
-        """
-        self.checkpoint_dir, self.parameter = self.__version(kwargs, checkpoint, prefix)
-        LOGGER.info('checkpoint: %s' % self.checkpoint_dir)
-        for k, v in self.parameter.items():
-            LOGGER.info(' - [arg] %s: %s' % (k, str(v)))
-        self.__dict__.update(self.parameter)
-
-    def remove_ckpt(self):
-        shutil.rmtree(self.checkpoint_dir)
-
-    @staticmethod
-    def md5(file_name):
-        """ get MD5 checksum """
-        hash_md5 = hashlib.md5()
-        with open(file_name, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_md5.update(chunk)
-        return hash_md5.hexdigest()
-
-    def __version(self, parameter: dict = None, checkpoint: str = None, prefix: str = None):
-        """ Checkpoint version
-
-         Parameter
-        ---------------------
-        parameter: parameter configuration to find same setting checkpoint
-        checkpoint: existing checkpoint to be loaded
-
-         Return
-        --------------------
-        path_to_checkpoint: path to new checkpoint dir
-        parameter: parameter
-        """
-
-        if checkpoint is None and parameter is None:
-            raise ValueError('either of `checkpoint` or `parameter` is needed.')
-
-        if checkpoint is None:
-            LOGGER.info('issue new checkpoint id')
-            # check if there are any checkpoints with same hyperparameters
-            version_name = []
-            for parameter_path in glob(os.path.join(CKPT_DIR, '*/parameter.json')):
-                _dir = parameter_path.replace('/parameter.json', '')
-                _dict = json.load(open(parameter_path))
-                version_name.append(_dir.split('/')[-1])
-                if parameter == _dict:
-                    inp = input('found a checkpoint with same configuration\n'
-                                'enter to delete the existing checkpoint %s\n'
-                                'or exit by type anything but not empty' % _dir)
-                    if inp == '':
-                        shutil.rmtree(_dir)
-                    else:
-                        exit()
-
-            with open(os.path.join(CKPT_DIR, 'tmp.json'), 'w') as _f:
-                json.dump(parameter, _f)
-            new_checkpoint = self.md5(os.path.join(CKPT_DIR, 'tmp.json'))
-            new_checkpoint = '_'.join([prefix, new_checkpoint]) if prefix else new_checkpoint
-            new_checkpoint_dir = os.path.join(CKPT_DIR, new_checkpoint)
-            os.makedirs(new_checkpoint_dir, exist_ok=True)
-            shutil.move(os.path.join(CKPT_DIR, 'tmp.json'), os.path.join(new_checkpoint_dir, 'parameter.json'))
-            return new_checkpoint_dir, parameter
-
-        else:
-            LOGGER.info('load existing checkpoint')
-            checkpoints = glob(os.path.join(CKPT_DIR, checkpoint, 'parameter.json'))
-            if len(checkpoints) >= 2:
-                raise ValueError('Checkpoints are duplicated: %s' % str(checkpoints))
-            elif len(checkpoints) == 0:
-                raise ValueError('No checkpoint: %s' % os.path.join(CKPT_DIR, checkpoint))
-            else:
-                parameter = json.load(open(checkpoints[0]))
-                target_checkpoints_path = checkpoints[0].replace('/parameter.json', '')
-                return target_checkpoints_path, parameter
 
 
 class Transforms:
@@ -212,7 +86,7 @@ class TransformerSequenceClassification:
             self.dataset_split = None
         else:
             stats = None
-            self.dataset_split, self.label_to_id = get_dataset(self.args.dataset)
+            self.dataset_split, self.label_to_id = get_dataset_sentiment(self.args.dataset)
             with open(os.path.join(self.args.checkpoint_dir, 'label_to_id.json'), 'w') as f:
                 json.dump(self.label_to_id, f)
         self.id_to_label = {v: k for k, v in self.label_to_id.items()}
@@ -326,7 +200,8 @@ class TransformerSequenceClassification:
     def test(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_test.log')))
         if self.dataset_split is None:
-            self.dataset_split = get_dataset(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
+            self.dataset_split = get_dataset_sentiment(
+                self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
         data_loader_test = {k: torch.utils.data.DataLoader(
             Dataset(**v, transform_function=self.transforms),
             num_workers=NUM_WORKER,
@@ -345,7 +220,8 @@ class TransformerSequenceClassification:
     def train(self):
         LOGGER.addHandler(logging.FileHandler(os.path.join(self.args.checkpoint_dir, 'logger_train.log')))
         if self.dataset_split is None:
-            self.dataset_split = get_dataset(self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
+            self.dataset_split = get_dataset_sentiment(
+                self.args.dataset, label_to_id=self.label_to_id, allow_update=False)
         writer = SummaryWriter(log_dir=self.args.checkpoint_dir)
         start_time = time()
         data_loader = {k: torch.utils.data.DataLoader(
@@ -368,8 +244,7 @@ class TransformerSequenceClassification:
                         break
                     self.__epoch += 1
         except RuntimeError:
-            LOGGER.info(traceback.format_exc())
-            LOGGER.info('*** RuntimeError (NaN found, see above log in detail) ***')
+            LOGGER.exception('*** RuntimeError (NaN found, see above log in detail) ***')
 
         except KeyboardInterrupt:
             LOGGER.info('*** KeyboardInterrupt ***')
